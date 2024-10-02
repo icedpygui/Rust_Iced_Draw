@@ -1,0 +1,12 @@
+[package]
+name = "draw"
+version = "0.1.0"
+authors = []
+edition = "2021"
+publish = false
+
+[dependencies]
+iced = { version = "0.13.1", features = ["debug", "canvas"]}
+serde = "*"
+serde_json = "*"
+
