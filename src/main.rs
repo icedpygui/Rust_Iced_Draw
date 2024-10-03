@@ -3,17 +3,20 @@ use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
-use iced::widget::{button, column, container, radio, row, text, vertical_space};
-use iced::{event, keyboard, Element, Event, Point, Subscription, Theme};
+use iced::widget::{button, column, container, pick_list, radio, row, text, vertical_space};
+use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
 use draw_canvas::{Choice, DrawCurve};
+mod colors;
+
 
 pub fn main() -> iced::Result {
-    iced::application("Bezier Tool - Iced", Example::update, Example::view)
+    iced::application("Drawing Tool - Iced", Example::update, Example::view)
         .theme(|_| Theme::CatppuccinMocha)
         .subscription(Example::subscription)
         .antialiasing(true)
@@ -36,6 +39,7 @@ enum Message {
     Event(Event),
     Load,
     Save,
+    ColorSelected(String),
 }
 
 impl Example {
@@ -116,14 +120,26 @@ impl Example {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let curves = serde_json::from_str(&data).expect("Unable to parse");
-                self.state.curves = convert_to_iced_point(curves);
+                self.state.curves = convert_to_iced_point_color(curves);
                 self.state.request_redraw();
             }
             Message::Save => {
                 let path = Path::new("./resources/data.json");
-                let curves = convert_to_ipg_point(&self.state.curves);
+                let curves = convert_to_draw_point_color(&self.state.curves);
                 let _ = save(path, &curves);
             }
+            Message::ColorSelected(color_str) => {
+                let f: DrawCanvasColor = match color_str.as_str() {
+                    "Primary" => DrawCanvasColor::PRIMARY,
+                    "Secondary" => DrawCanvasColor::SECONDARY,
+                    "Success" => DrawCanvasColor::SUCCESS,
+                    "Danger" => DrawCanvasColor::DANGER,
+                    _ => DrawCanvasColor::WHITE,
+                };
+                self.state.selected_color_str = Some(color_str);
+                self.state.selected_color = Color::from(get_rgba_from_canvas_draw_color(f));
+                    
+            },
         }
     }
 
@@ -180,6 +196,18 @@ impl Example {
         let del_last: Element<Message> = button("Delete Last")
                                             .on_press(Message::DeleteLast)
                                             .into();
+        let color_opt = [
+                                    "Primary".to_string(),
+                                    "Secondary".to_string(),
+                                    "Success".to_string(),
+                                    "Danger".to_string(),
+                                ];
+        let colors: Element<Message> = pick_list(
+                                            color_opt, 
+                                            self.state.selected_color_str.clone(), 
+                                            Message::ColorSelected).into();
+
+        let widths: Element<Message> = text(format!("{}", 2.0)).into();
 
         let edit: Element<Message> = if self.state.curve_to_edit.is_some() {
             button("Edit Next")
@@ -217,6 +245,8 @@ impl Example {
                                                             del_last,
                                                             edit,
                                                             load_save_row,
+                                                            colors,
+                                                            widths,
                                                             vertical_space().height(50.0).into(),
                                                             instructions,
                                                             ])
@@ -248,55 +278,78 @@ pub fn save(path: impl AsRef<Path>, data: &impl Serialize) -> std::io::Result<()
 // iced Point does not derive any serialization 
 // so had to use own version for saving data.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct IpgPoint{
+pub struct DrawCanvasPoint{
     x: f32,
     y: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct IpgDrawCurve {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrawCanvasCurve {
     curve_type: Choice,
-    from: IpgPoint,
-    to: IpgPoint,
-    control: Option<IpgPoint>,
+    from: DrawCanvasPoint,
+    to: DrawCanvasPoint,
+    control: Option<DrawCanvasPoint>,
+    color: DrawColor,
+    width: f32,
 }
 
-fn convert_to_iced_point(curves: Vec<IpgDrawCurve>) -> Vec<DrawCurve> {
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct DrawColor {
+    /// Red component, 0.0 - 1.0
+    pub r: f32,
+    /// Green component, 0.0 - 1.0
+    pub g: f32,
+    /// Blue component, 0.0 - 1.0
+    pub b: f32,
+    /// Transparency, 0.0 - 1.0
+    pub a: f32,
+}
+
+impl DrawColor {
+    pub const fn from_rgba(r: f32, g: f32, b: f32, a: f32) -> DrawColor {
+        DrawColor { r, g, b, a }
+    }
+}
+
+fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
     let mut iced_curves = vec![];
     for curve in curves {
-        let from = to_point(curve.from);
-        let to = to_point(curve.to);
+        let from = convert_to_iced_point(curve.from);
+        let to = convert_to_iced_point(curve.to);
         let control: Option<Point> = 
             match curve.control {
-                Some(ctrl) => Some(to_point(ctrl)),
+                Some(ctrl) => Some(convert_to_iced_point(ctrl)),
                 None => None,
             };
-        
-        iced_curves.push(DrawCurve { curve_type: curve.curve_type, from, to, control });
+        let color = Color{ r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
+        let width = curve.width;
+        iced_curves.push(DrawCurve { curve_type: curve.curve_type, from, to, control, color: Some(color), width });
     }
     iced_curves
 }
 
-fn convert_to_ipg_point(curves: &Vec<DrawCurve>) -> Vec<IpgDrawCurve> {
+fn convert_to_draw_point_color(curves: &Vec<DrawCurve>) -> Vec<DrawCanvasCurve> {
     let mut ipg_curves = vec![];
     for curve in curves {
-        let from = to_ipg_point(curve.from);
-        let to = to_ipg_point(curve.to);
-        let control: Option<IpgPoint> = 
+        let from = convert_to_draw_point(curve.from);
+        let to = convert_to_draw_point(curve.to);
+        let control: Option<DrawCanvasPoint> = 
             match curve.control {
-                Some(ctrl) => Some(to_ipg_point(ctrl)),
+                Some(ctrl) => Some(convert_to_draw_point(ctrl)),
                 None => None,
             };
-        
-        ipg_curves.push(IpgDrawCurve { curve_type: curve.curve_type, from, to, control });
+            let curve_color = curve.color.unwrap();
+        let color = DrawColor { r: curve_color.r, g: curve_color.g, b: curve_color.b, a: curve_color.a };
+        let width = curve.width;
+        ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, from, to, control, color, width,});
     }
     ipg_curves
 }
 
-fn to_point(ipg_point: IpgPoint) -> Point {
+fn convert_to_iced_point(ipg_point: DrawCanvasPoint) -> Point {
     Point { x: ipg_point.x, y: ipg_point.y }
 }
-fn to_ipg_point(point: Point) -> IpgPoint {
-    IpgPoint { x: point.x, y: point.y }
+fn convert_to_draw_point(point: Point) -> DrawCanvasPoint {
+    DrawCanvasPoint { x: point.x, y: point.y }
 }
 

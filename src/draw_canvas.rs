@@ -1,4 +1,5 @@
-use iced::{mouse, Size};
+
+use iced::{mouse, Color, Size};
 use iced::widget::canvas::event::{self, Event};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Rectangle, Renderer, Theme};
@@ -16,8 +17,7 @@ pub enum Choice {
     RightTriangle,
     Triangle,
 }
-
-#[derive(Default)]
+#[derive(Debug)]
 pub struct State {
     cache: canvas::Cache,
     pub curves: Vec<DrawCurve>,
@@ -25,6 +25,25 @@ pub struct State {
     pub escape_pressed: bool,
     pub curve_to_edit: Option<usize>,
     pub edit_points: Vec<Point>,
+    pub selected_color_str: Option<String>,
+    pub selected_color: Color,
+    pub draw_width: f32,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self { 
+                cache: canvas::Cache::default(),
+                curves: vec![],
+                selection: Choice::None,
+                escape_pressed: false,
+                curve_to_edit: None,
+                edit_points: vec![],
+                selected_color_str: None,
+                selected_color: Color::WHITE,
+                draw_width: 2.0,
+             }
+        }
 }
 
 impl State {
@@ -71,6 +90,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                 
                 let message = match mouse_event {
                     mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                        let color = Some(self.state.selected_color);
+                        let width = self.state.draw_width;
 
                         if self.state.curve_to_edit.is_some() {
                             if program_state.is_none() {
@@ -82,7 +103,9 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                                                 edit_index: Some(index),
                                                                                 from: curve.from, 
                                                                                 to: curve.to, 
-                                                                                control: curve.control });
+                                                                                control: curve.control,
+                                                                                color,
+                                                                                width });
                                     }
                                 }
                             }
@@ -91,22 +114,22 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                         match self.state.selection {
                             Choice::None => None,
                             Choice::Bezier => {
-                                pending_bezier(program_state, cursor_position)
+                                pending_bezier(program_state, cursor_position, color, width)
                             },
                             Choice::Circle => {
-                                pending_circle(program_state, cursor_position)
+                                pending_circle(program_state, cursor_position, color, width)
                             },
                             Choice::Line => {
-                                pending_line(program_state, cursor_position)
+                                pending_line(program_state, cursor_position, color, width)
                             },
                             Choice::Rectangle => {
-                                pending_rectangle(program_state, cursor_position)
+                                pending_rectangle(program_state, cursor_position, color, width)
                             },
                             Choice::Triangle => {
-                                pending_triangle(program_state, cursor_position)
+                                pending_triangle(program_state, cursor_position, color, width)
                             },
                             Choice::RightTriangle => {
-                                pending_right_triangle(program_state, cursor_position)
+                                pending_right_triangle(program_state, cursor_position, color, width)
                             },
                         }
                     }
@@ -118,7 +141,9 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             match st {
                                 Pending::Edit { curve_type, edit_index,
                                                 mut from, mut to, mut 
-                                                control } => {
+                                                control,
+                                                color,
+                                                width } => {
                                     match edit_index {
                                         Some(0) => from = cursor_position,
                                         Some(1) => to = cursor_position,
@@ -132,6 +157,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             from,
                                             to,
                                             control,
+                                            color,
+                                            width,
                                         })
 
                                 },
@@ -198,15 +225,20 @@ pub struct DrawCurve {
     pub from: Point,
     pub to: Point,
     pub control: Option<Point>,
+    pub color: Option<Color>,
+    pub width: f32,
 }
 
 impl DrawCurve {
     fn draw_all(curves: &[DrawCurve], frame: &mut Frame, theme: &Theme, curve_to_edit: Option<usize>) {
-        let curves = Path::new(|p| {
-            for (index, curve) in curves.iter().enumerate() {
-                match curve.curve_type {
-                    Choice::None => p.move_to(Point::ORIGIN),
-                    Choice::Bezier => {
+
+        for (index, curve) in curves.iter().enumerate() {
+            match curve.curve_type {
+                Choice::None => {
+                    ()
+                },
+                Choice::Bezier => {
+                    let path = Path::new(|p| {
                         if curve_to_edit.is_some() && curve_to_edit == Some(index) {
                             p.circle(curve.from, 2.0);
                             p.circle(curve.to, 2.0);
@@ -214,87 +246,158 @@ impl DrawCurve {
                         }
                         p.move_to(curve.from);
                         p.quadratic_curve_to(curve.control.unwrap(), curve.to);
-                        
-                    },
-                    Choice::Circle => {
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
+                Choice::Circle => {
+                    let path = Path::new(|p| {
                         let radius = curve.from.distance(curve.to);
                         p.circle(curve.from, radius);
-                    },
-                    Choice::Line => {
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
+                Choice::Line => {
+                    let path = Path::new(|p| {
                         p.move_to(curve.from);
                         p.line_to(curve.to);
-                
-                    },
-                    Choice::Rectangle => {
-                        let width = (curve.to.x-curve.from.x).abs();
-                        let height = (curve.to.y-curve.from.y).abs();
-                        let size = Size{ width, height };
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
+                Choice::Rectangle => {
+                    let width = (curve.to.x-curve.from.x).abs();
+                    let height = (curve.to.y-curve.from.y).abs();
+                    let size = Size{ width, height };
 
-                        let top_left = if curve.from.x < curve.to.x && curve.from.y > curve.to.y {
-                            // top right
-                            Point{ x: curve.from.x, y: curve.from.y-height }
-                        } else if curve.from.x > curve.to.x && curve.from.y > curve.to.y {
-                            // top_left
-                            Point{x: curve.from.x-width, y: curve.to.y}
-                        } else if curve.from.x > curve.to.x  && curve.from.y < curve.to.y {
-                            // bottom left
-                            Point{ x: curve.to.x, y: curve.from.y }
-                        } else if curve.from.x < curve.to.x  && curve.from.y < curve.to.y {
-                            // bottom right
-                            curve.from
-                        } else {
-                            curve.to
-                        };
+                    let top_left = if curve.from.x < curve.to.x && curve.from.y > curve.to.y {
+                        // top right
+                        Point{ x: curve.from.x, y: curve.from.y-height }
+                    } else if curve.from.x > curve.to.x && curve.from.y > curve.to.y {
+                        // top_left
+                        Point{x: curve.from.x-width, y: curve.to.y}
+                    } else if curve.from.x > curve.to.x  && curve.from.y < curve.to.y {
+                        // bottom left
+                        Point{ x: curve.to.x, y: curve.from.y }
+                    } else if curve.from.x < curve.to.x  && curve.from.y < curve.to.y {
+                        // bottom right
+                        curve.from
+                    } else {
+                        curve.to
+                    };
+                    let path = Path::new(|p| {
                         p.rectangle(top_left, size);
-                    },
-                    Choice::Triangle => {
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
+                Choice::Triangle => {
+                    let path = Path::new(|p| {
                         p.move_to(curve.from);
                         p.line_to(curve.to);
                         p.line_to(curve.control.unwrap());
                         p.line_to(curve.from);
-                    },
-                    Choice::RightTriangle => {
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
+                Choice::RightTriangle => {
+                    let path = Path::new(|p| {
                         p.move_to(curve.from);
                         p.line_to(curve.to);
                         p.line_to(curve.control.unwrap());
                         p.line_to(curve.from);
-                    },
-                }
+                    });
+                    let color = match curve.color {
+                        Some(c) => c,
+                        None => theme.palette().text
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(color),
+                    );
+                },
             }
-        });
+        }
 
-        frame.stroke(
-            &curves,
-            Stroke::default()
-                .with_width(2.0)
-                .with_color(theme.palette().text),
-        );
     }
 }
 
-fn pending_bezier(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+
+fn pending_bezier(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Bezier,
                 from: cursor_position,
+                color,
+                width,
             });
             
             None
         }
         Some(Pending::One { curve_type: Choice::Bezier,
-                            from }) => {
+                            from,
+                            color,
+                            width, }) => {
             *state = Some(Pending::Two {
                                 curve_type: Choice::Bezier,
                                 from,
                                 to: cursor_position,
-            });
+                                color,
+                                width,
+                                });
             
             None
         }
         Some(Pending::Two { curve_type: Choice::Bezier, 
                             from, 
-                            to }) => {
+                            to,
+                            color,
+                            width, }) => {
             *state = None;
 
             Some(DrawCurve {
@@ -302,13 +405,17 @@ fn pending_bezier(state: &mut Option<Pending>, cursor_position: Point) -> Option
                 from,
                 to,
                 control: Some(cursor_position),
+                color,
+                width,
             })
         }
         Some(Pending::Edit {curve_type: Choice::Bezier,
                             edit_index, 
                             from, 
                             to,
-                            control }) => {
+                            control,
+                            color,
+                            width }) => {
                                
             *state = Some(Pending::Edit {
                 curve_type: Choice::Bezier,
@@ -316,6 +423,8 @@ fn pending_bezier(state: &mut Option<Pending>, cursor_position: Point) -> Option
                 from,
                 to,
                 control,
+                color,
+                width,
             });
 
             None
@@ -324,18 +433,22 @@ fn pending_bezier(state: &mut Option<Pending>, cursor_position: Point) -> Option
     }
 }
 
-fn pending_circle(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+fn pending_circle(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Circle,
                 from: cursor_position,
+                color,
+                width
             });
 
             None
         }
         Some(Pending::One { curve_type: Choice::Circle, 
-                            from }) => {
+                            from,
+                            color,
+                            width }) => {
             *state = None;
 
             Some(DrawCurve {
@@ -343,9 +456,11 @@ fn pending_circle(state: &mut Option<Pending>, cursor_position: Point) -> Option
                 from,
                 to: cursor_position,
                 control: None,
+                color,
+                width,
             })
         }
-        Some(Pending::Two { curve_type: Choice::Circle, from: _, to: _ }) => {
+        Some(Pending::Two { curve_type: Choice::Circle, from: _, to: _, color: _, width: _ }) => {
             *state = None;
             None
         }
@@ -354,18 +469,22 @@ fn pending_circle(state: &mut Option<Pending>, cursor_position: Point) -> Option
     }
 }
 
-fn pending_line(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+fn pending_line(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Line,
                 from: cursor_position,
+                color, 
+                width
             });
 
             None
         }
         Some(Pending::One { curve_type: Choice::Line, 
-                            from }) => {
+                            from, 
+                            color, 
+                            width }) => {
             *state = None;
 
             Some(DrawCurve {
@@ -373,9 +492,11 @@ fn pending_line(state: &mut Option<Pending>, cursor_position: Point) -> Option<D
                 from,
                 to: cursor_position,
                 control: None,
+                color,
+                width,
             })
         }
-        Some(Pending::Two { curve_type: Choice::Line, from: _, to: _ }) => {
+        Some(Pending::Two { curve_type: Choice::Line, from: _, to: _ , color: _, width: _ }) => {
             *state = None;
             None
         }
@@ -384,18 +505,20 @@ fn pending_line(state: &mut Option<Pending>, cursor_position: Point) -> Option<D
     }
 }
 
-fn pending_rectangle(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+fn pending_rectangle(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Rectangle,
                 from: cursor_position,
+                color,
+                width,
             });
 
             None
         }
         Some(Pending::One { curve_type: Choice::Rectangle, 
-                            from }) => {
+                            from , color, width}) => {
             *state = None;
 
             Some(DrawCurve {
@@ -403,9 +526,11 @@ fn pending_rectangle(state: &mut Option<Pending>, cursor_position: Point) -> Opt
                 from,
                 to: cursor_position,
                 control: None,
+                color,
+                width,
             })
         }
-        Some(Pending::Two { curve_type: Choice::Rectangle, from: _, to: _ }) => {
+        Some(Pending::Two { curve_type: Choice::Rectangle, from: _, to: _ , color: _, width: _}) => {
             *state = None;
             None
         }
@@ -414,29 +539,35 @@ fn pending_rectangle(state: &mut Option<Pending>, cursor_position: Point) -> Opt
     }
 }
 
-fn pending_triangle(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+fn pending_triangle(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Triangle,
                 from: cursor_position,
+                color,
+                width,
             });
 
             None
         }
         Some(Pending::One { curve_type: Choice::Triangle,
-                            from }) => {
+                            from , color, width}) => {
             *state = Some(Pending::Two {
                 curve_type: Choice::Triangle,
                 from,
                 to: cursor_position,
+                color,
+                width,
             });
 
             None
         }
         Some(Pending::Two { curve_type: Choice::Triangle, 
                             from, 
-                            to }) => {
+                            to,
+                            color,
+                            width, }) => {
             *state = None;
 
             Some(DrawCurve {
@@ -444,35 +575,45 @@ fn pending_triangle(state: &mut Option<Pending>, cursor_position: Point) -> Opti
                 from,
                 to: to,
                 control: Some(cursor_position),
+                color,
+                width,
             })
         }
         _ => None
     }
 }
 
-fn pending_right_triangle(state: &mut Option<Pending>, cursor_position: Point) -> Option<DrawCurve> {
+fn pending_right_triangle(state: &mut Option<Pending>, cursor_position: Point, color: Option<Color>, width: f32) -> Option<DrawCurve> {
     match *state {
         None => {
             *state = Some(Pending::One {
                 curve_type: Choice::Triangle,
                 from: cursor_position,
+                color,
+                width,
             });
 
             None
         }
         Some(Pending::One { curve_type: Choice::Triangle,
-                            from }) => {
+                            from,
+                            color,
+                            width, }) => {
             *state = Some(Pending::Two {
                 curve_type: Choice::Triangle,
                 from,
                 to: cursor_position,
+                color,
+                width,
             });
 
             None
         }
         Some(Pending::Two { curve_type: Choice::Triangle, 
                             from, 
-                            to }) => {
+                            to,
+                            color,
+                            width, }) => {
             *state = None;
 
             Some(DrawCurve {
@@ -480,6 +621,8 @@ fn pending_right_triangle(state: &mut Option<Pending>, cursor_position: Point) -
                 from,
                 to,
                 control: Some(cursor_position),
+                color,
+                width,
             })
         }
         _ => None
@@ -488,9 +631,9 @@ fn pending_right_triangle(state: &mut Option<Pending>, cursor_position: Point) -
 
 #[derive(Debug, Clone, Copy)]
 enum Pending {
-    One { curve_type: Choice, from: Point },
-    Two { curve_type: Choice, from: Point, to: Point },
-    Edit {curve_type: Choice, edit_index: Option<usize>, from: Point, to: Point, control: Option<Point>},
+    One { curve_type: Choice, from: Point, color: Option<Color>, width: f32 },
+    Two { curve_type: Choice, from: Point, to: Point, color: Option<Color>, width: f32 },
+    Edit {curve_type: Choice, edit_index: Option<usize>, from: Point, to: Point, control: Option<Point>, color: Option<Color>, width: f32 },
 }
 
 impl Pending {
@@ -506,18 +649,36 @@ impl Pending {
         if let Some(cursor_position) = cursor.position_in(bounds) {
 
             match *self {
-                Pending::One { curve_type, from } => {
-                    let line: Path = match curve_type {
-                        Choice::None => todo!(),
+                Pending::One { curve_type, from, color, width } => {
+                    match curve_type {
+                        Choice::None => (),
                         Choice::Bezier => {
-                            Path::line(from, cursor_position)
+                            let line = Path::line(from, cursor_position);
+                            frame.stroke(
+                            &line,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                         },
                         Choice::Circle => {
                             let radius = from.distance(cursor_position);
-                            Path::circle(from, radius)
+                            let circle = Path::circle(from, radius);
+                            frame.stroke(
+                            &circle,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                         },
                         Choice::Line => {
-                            Path::line(from, cursor_position)
+                            let line = Path::line(from, cursor_position);
+                            frame.stroke(
+                            &line,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                         },
                         Choice::Rectangle => {
                             let width = (cursor_position.x-from.x).abs();
@@ -540,30 +701,41 @@ impl Pending {
                                 None
                             };
 
-                            if top_left.is_some() {
-                                let size = Size{ width, height };
-                            Path::rectangle(top_left.unwrap(), size)
-                            } else {
-                                Path::line(from, cursor_position)
-                            }
+                            let rect = if top_left.is_some() {
+                                    let size = Size{ width, height };
+                                Path::rectangle(top_left.unwrap(), size)
+                                } else {
+                                    Path::line(from, cursor_position)
+                                };
+                            frame.stroke(
+                            &rect,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                             
                         },
                         Choice::Triangle => {
-                            Path::line(from, cursor_position)
+                            let tr = Path::line(from, cursor_position);
+                            frame.stroke(
+                            &tr,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                         },
                         Choice::RightTriangle => {
-                            Path::line(from, cursor_position)
+                            let rtr = Path::line(from, cursor_position);
+                            frame.stroke(
+                            &rtr,
+                            Stroke::default()
+                                .with_width(width)
+                                .with_color(color.unwrap()),
+                            )
                         },
                     };
-                    
-                    frame.stroke(
-                        &line,
-                        Stroke::default()
-                            .with_width(2.0)
-                            .with_color(theme.palette().text),
-                    );
                 }
-                Pending::Two { curve_type, from, to } => {
+                Pending::Two { curve_type, from, to, color, width } => {
                     let curve = match curve_type {
                         Choice::None => {
                             DrawCurve {
@@ -571,6 +743,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Bezier => {
@@ -579,6 +753,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: Some(cursor_position),
+                                color,
+                                width,
                             }
                         },
                         Choice::Circle => {
@@ -587,6 +763,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Line => {
@@ -595,6 +773,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Rectangle => {
@@ -603,6 +783,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Triangle => {
@@ -611,6 +793,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: Some(cursor_position),
+                                color,
+                                width,
                             }
                         },
                         Choice::RightTriangle => {
@@ -619,13 +803,21 @@ impl Pending {
                                 from,
                                 to,
                                 control: Some(cursor_position),
+                                color,
+                                width,
                             }
                         },
                     };
 
                     DrawCurve::draw_all(&[curve], &mut frame, theme, None);
                 }
-                Pending::Edit { curve_type, edit_index, mut from, mut to, mut control } => {
+                Pending::Edit { curve_type, 
+                                edit_index, 
+                                mut from, 
+                                mut to, 
+                                mut control, 
+                                color, 
+                                width } => {
                     match edit_index {
                         Some(0) => from = cursor_position,
                         Some(1) => to = cursor_position,
@@ -640,6 +832,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Bezier => {
@@ -648,6 +842,8 @@ impl Pending {
                                 from,
                                 to,
                                 control,
+                                color,
+                                width,
                             }
                         },
                         Choice::Circle => {
@@ -656,6 +852,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Line => {
@@ -664,6 +862,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Rectangle => {
@@ -672,6 +872,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: None,
+                                color,
+                                width,
                             }
                         },
                         Choice::Triangle => {
@@ -680,6 +882,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: Some(cursor_position),
+                                color,
+                                width,
                             }
                         },
                         Choice::RightTriangle => {
@@ -688,6 +892,8 @@ impl Pending {
                                 from,
                                 to,
                                 control: Some(cursor_position),
+                                color,
+                                width,
                             }
                         },
                     };
