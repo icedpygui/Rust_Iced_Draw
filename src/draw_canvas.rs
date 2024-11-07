@@ -39,7 +39,7 @@ impl Default for State {
                 escape_pressed: false,
                 curve_to_edit: None,
                 edit_points: vec![],
-                selected_color_str: None,
+                selected_color_str: Some("White".to_string()),
                 selected_color: Color::WHITE,
                 draw_width: 2.0,
              }

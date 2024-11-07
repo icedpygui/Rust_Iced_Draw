@@ -201,6 +201,7 @@ impl Example {
                                     "Secondary".to_string(),
                                     "Success".to_string(),
                                     "Danger".to_string(),
+                                    "White".to_string(),
                                 ];
         let colors: Element<Message> = pick_list(
                                             color_opt, 
