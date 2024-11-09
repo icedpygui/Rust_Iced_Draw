@@ -47,12 +47,13 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
+                dbg!(&curve);
                 self.curves.push(curve);
                 self.state.request_redraw();
             }
             Message::Clear => {
                 self.state = draw_canvas::State::default();
-                self.state.curves.clear();
+                self.curves.clear();
             }
             Message::DeleteLast => {
                 if self.state.curves.is_empty() {
@@ -192,52 +193,81 @@ impl Example {
     }
 
     fn view(&self) -> Element<Message> {
-        let clear_btn: Element<Message> = button("Clear")
-                                            .on_press(Message::Clear)
-                                            .into();
+        let clear_btn: Element<Message> = 
+            button(
+                "Clear")
+                .on_press(Message::Clear)
+                .into();
 
-        let biezer_ctrl: Element<Message> = radio(
-                                            "Beizer",
-                                            IpgCanvasWidget::Bezier,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
-        let circle_ctrl: Element<Message> = radio(
-                                            "Circle",
-                                            IpgCanvasWidget::Circle,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
+        let biezer: Element<Message> = 
+            radio(
+                "Beizer",
+                IpgCanvasWidget::Bezier,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
 
-        let line_ctrl: Element<Message> = radio(
-                                            "Line",
-                                            IpgCanvasWidget::Line,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
-        let rect_ctrl: Element<Message> = radio(
-                                            "Rectangle",
-                                            IpgCanvasWidget::Rectangle,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
+        let circle: Element<Message> = 
+            radio(
+                "Circle",
+                IpgCanvasWidget::Circle,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
 
-        let triangle_ctrl: Element<Message> = radio(
-                                            "Triangle",
-                                            IpgCanvasWidget::Triangle,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
-        let r_triangle_ctrl: Element<Message> = radio(
-                                            "Right Triangle",
-                                            IpgCanvasWidget::RightTriangle,
-                                            Some(self.state.selection),
-                                            Message::RadioSelected,
-                                            ).into();
+        let line: Element<Message> = 
+            radio(
+                "Line",
+                IpgCanvasWidget::Line,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
 
-        let del_last: Element<Message> = button("Delete Last")
-                                            .on_press(Message::DeleteLast)
-                                            .into();
+        let polygon: Element<Message> = 
+        radio(
+            "Polygon",
+            IpgCanvasWidget::Polygon,
+            Some(self.state.selection),
+            Message::RadioSelected,
+            ).into();
+
+        let polyline: Element<Message> = 
+            radio(
+                "PolyLine",
+                IpgCanvasWidget::PolyLine,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
+
+        let rect: Element<Message> = 
+            radio(
+                "Rectangle",
+                IpgCanvasWidget::Rectangle,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
+
+        let triangle: Element<Message> = 
+            radio(
+                "Triangle",
+                IpgCanvasWidget::Triangle,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
+
+        let r_triangle: Element<Message> = 
+            radio(
+                "Right Triangle",
+                IpgCanvasWidget::RightTriangle,
+                Some(self.state.selection),
+                Message::RadioSelected,
+                ).into();
+
+        let del_last: Element<Message> = 
+            button("Delete Last")
+                .on_press(Message::DeleteLast)
+                .into();
+
         let color_opt = [
                                     "Primary".to_string(),
                                     "Secondary".to_string(),
@@ -245,10 +275,11 @@ impl Example {
                                     "Danger".to_string(),
                                     "White".to_string(),
                                 ];
-        let colors: Element<Message> = pick_list(
-                                            color_opt, 
-                                            self.state.selected_color_str.clone(), 
-                                            Message::ColorSelected).into();
+        let colors: Element<Message> = 
+            pick_list(
+                color_opt, 
+                self.state.selected_color_str.clone(), 
+                Message::ColorSelected).into();
 
         let widths: Element<Message> = text(format!("{}", 2.0)).into();
 
@@ -262,46 +293,54 @@ impl Example {
                 .into()
         };
         
-        let save: Element<Message> = button("Save")
-                                    .padding(5.0)
-                                    .on_press(Message::Save)
-                                    .into();
+        let save: Element<Message> = 
+            button("Save")
+                .padding(5.0)
+                .on_press(Message::Save)
+                .into();
 
-        let load: Element<Message>  = button("Load")
-                                    .padding(5.0)
-                                    .on_press(Message::Load)
-                                    .into();
+        let load: Element<Message>  = 
+            button("Load")
+                .padding(5.0)
+                .on_press(Message::Load)
+                .into();
         
-        let load_save_row: Element<Message> = row(vec![load, save])
-                                                .spacing(5.0)
-                                                .into();
+        let load_save_row: Element<Message> = 
+            row(vec![load, save])
+                .spacing(5.0)
+                .into();
 
-        let instructions: Element<Message> = text("Start:\n Select a curve.\n\nDraw:\nUse left mouse button, click and move move then click again.\n\nCancel Draw:\nHold down esc and press left mouse button to cancel drawing.").into();
+        let instructions: Element<Message> = 
+            text("Start:\n Select a curve.\n\nDraw:\nUse left mouse button, click and move move then click again.\n\nCancel Draw:\nHold down esc and press left mouse button to cancel drawing.").into();
          
-        let col: Element<Message> = column(vec![clear_btn, 
-                                                            biezer_ctrl, 
-                                                            circle_ctrl, 
-                                                            line_ctrl,
-                                                            rect_ctrl,
-                                                            triangle_ctrl,
-                                                            r_triangle_ctrl,
-                                                            del_last,
-                                                            edit,
-                                                            load_save_row,
-                                                            colors,
-                                                            widths,
-                                                            vertical_space().height(50.0).into(),
-                                                            instructions,
-                                                            ])
-                                                            .width(150.0)
-                                                            .spacing(10.0)
-                                                            .padding(10.0)
-                                                            .into();
+        let col: Element<Message> = 
+            column(vec![clear_btn, 
+            biezer, 
+            circle, 
+            line,
+            polygon,
+            polyline,
+            rect,
+            triangle,
+            r_triangle,
+            del_last,
+            edit,
+            load_save_row,
+            colors,
+            widths,
+            vertical_space().height(50.0).into(),
+            instructions,
+            ])
+            .width(150.0)
+            .spacing(10.0)
+            .padding(10.0)
+            .into();
 
         
 
         let draw =  
-            container(self.state.view(&self.state.curves)
+            container(self.state
+                .view(&self.curves)
                 .map(Message::AddCurve))
                 .into();
         
