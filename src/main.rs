@@ -11,7 +11,7 @@ use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{Choice, DrawCurve};
+use draw_canvas::{IpgCanvasWidget, DrawCurve};
 mod colors;
 
 
@@ -27,6 +27,7 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct Example {
     state: draw_canvas::State,
+    curves: Vec<DrawCurve>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ enum Message {
     Clear,
     DeleteLast,
     Edit,
-    RadioSelected(Choice),
+    RadioSelected(IpgCanvasWidget),
     Event(Event),
     Load,
     Save,
@@ -46,17 +47,7 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
-                if self.state.curve_to_edit.is_some() {
-                    self.state.curves[self.state.curve_to_edit.unwrap()] = curve;
-                    self.state.edit_points = vec![curve.from, curve.to];
-                    if curve.control.is_some() {
-                        self.state.edit_points.push(curve.control.unwrap());
-                    }
-                } else {
-                    self.state.curves.push(curve);
-                    self.state.curve_to_edit = None;
-                }
-                
+                self.curves.push(curve);
                 self.state.request_redraw();
             }
             Message::Clear => {
@@ -71,37 +62,88 @@ impl Example {
                 self.state.request_redraw();
             }
             Message::Edit => {
-                if self.state.curves.is_empty() {
-                    return
-                }
+                // if self.state.curves.is_empty() {
+                //     return
+                // }
                 
-                // first edit press sets to curve 0
-                if self.state.curve_to_edit.is_none() {
-                    self.state.curve_to_edit = Some(0);
-                } else {
-                    let mut edit = self.state.curve_to_edit.unwrap();
-                    edit += 1;
-                    if edit > self.state.curves.len()-1 {
-                        self.state.curve_to_edit = None;
-                    } else {
-                        self.state.curve_to_edit = Some(edit);
-                    }
-                }
-                self.state.selection = if self.state.curve_to_edit.is_some() {
-                    let curve = self.state.curves[self.state.curve_to_edit.unwrap()];
-                    self.state.edit_points = vec![curve.from, curve.to];
-                    if curve.control.is_some() {
-                        self.state.edit_points.push(curve.control.unwrap());
-                    }
-                    curve.curve_type
-                } else {
-                    Choice::None
-                };
+                // // first edit press sets to curve 0
+                // if self.state.curve_to_edit.is_none() {
+                //     self.state.curve_to_edit = Some(0);
+                // } else {
+                //     let mut edit = self.state.curve_to_edit.unwrap();
+                //     edit += 1;
+                //     if edit > self.state.curves.len()-1 {
+                //         self.state.curve_to_edit = None;
+                //     } else {
+                //         self.state.curve_to_edit = Some(edit);
+                //     }
+                // }
+                // self.state.selection = if self.state.curve_to_edit.is_some() {
+                //     let curve = self.state.curves[self.state.curve_to_edit.unwrap()];
+                //     self.state.edit_points = vec![curve.from, curve.to];
+                //     if curve.control.is_some() {
+                //         self.state.edit_points.push(curve.control.unwrap());
+                //     }
+                //     curve.curve_type
+                // } else {
+                //     IpgCanvasWidget::None
+                // };
                 
-                self.state.request_redraw();
+                // self.state.request_redraw();
             }
             Message::RadioSelected(choice) => {
-                self.state.selection = choice; 
+                self.state.selection = choice;
+                match choice {
+                    IpgCanvasWidget::None => (),
+                    IpgCanvasWidget::Bezier => {
+                        self.state.make_selection(IpgCanvasWidget::Bezier);
+                        self.state.set_indexes(3);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::Circle => {
+                        self.state.make_selection(IpgCanvasWidget::Circle);
+                        self.state.set_indexes(2);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::Line => {
+                        self.state.make_selection(IpgCanvasWidget::Line);
+                        self.state.set_indexes(2);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::PolyLine => {
+                        self.state.make_selection(IpgCanvasWidget::PolyLine);
+                        self.state.set_indexes(5);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::Polygon => {
+                        self.state.make_selection(IpgCanvasWidget::Polygon);
+                        self.state.set_indexes(5);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::Rectangle => {
+                        self.state.make_selection(IpgCanvasWidget::Rectangle);
+                        self.state.set_indexes(2);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::RightTriangle => {
+                        self.state.make_selection(IpgCanvasWidget::RightTriangle);
+                        self.state.set_indexes(3);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                    IpgCanvasWidget::Triangle => {
+                        self.state.make_selection(IpgCanvasWidget::Triangle);
+                        self.state.set_indexes(3);
+                        self.state.set_color(Color::WHITE);
+                        self.state.set_width(2.0);
+                    },
+                } 
             },
             Message::Event(Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(key::Named::Escape),
@@ -156,39 +198,39 @@ impl Example {
 
         let biezer_ctrl: Element<Message> = radio(
                                             "Beizer",
-                                            Choice::Bezier,
+                                            IpgCanvasWidget::Bezier,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
         let circle_ctrl: Element<Message> = radio(
                                             "Circle",
-                                            Choice::Circle,
+                                            IpgCanvasWidget::Circle,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
 
         let line_ctrl: Element<Message> = radio(
                                             "Line",
-                                            Choice::Line,
+                                            IpgCanvasWidget::Line,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
         let rect_ctrl: Element<Message> = radio(
                                             "Rectangle",
-                                            Choice::Rectangle,
+                                            IpgCanvasWidget::Rectangle,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
 
         let triangle_ctrl: Element<Message> = radio(
                                             "Triangle",
-                                            Choice::Triangle,
+                                            IpgCanvasWidget::Triangle,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
         let r_triangle_ctrl: Element<Message> = radio(
                                             "Right Triangle",
-                                            Choice::RightTriangle,
+                                            IpgCanvasWidget::RightTriangle,
                                             Some(self.state.selection),
                                             Message::RadioSelected,
                                             ).into();
@@ -286,10 +328,8 @@ pub struct DrawCanvasPoint{
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrawCanvasCurve {
-    curve_type: Choice,
-    from: DrawCanvasPoint,
-    to: DrawCanvasPoint,
-    control: Option<DrawCanvasPoint>,
+    curve_type: IpgCanvasWidget,
+    points: Vec<DrawCanvasPoint>,
     color: DrawColor,
     width: f32,
 }
@@ -315,16 +355,13 @@ impl DrawColor {
 fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
     let mut iced_curves = vec![];
     for curve in curves {
-        let from = convert_to_iced_point(curve.from);
-        let to = convert_to_iced_point(curve.to);
-        let control: Option<Point> = 
-            match curve.control {
-                Some(ctrl) => Some(convert_to_iced_point(ctrl)),
-                None => None,
-            };
+        let mut dc_points = vec![];
+        for point in curve.points.iter() {
+            dc_points.push(convert_to_iced_point(point.clone()));
+        }
         let color = Color{ r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
         let width = curve.width;
-        iced_curves.push(DrawCurve { curve_type: curve.curve_type, from, to, control, color: Some(color), width });
+        iced_curves.push(DrawCurve { curve_type: curve.curve_type, points: dc_points, color, width });
     }
     iced_curves
 }
@@ -332,17 +369,14 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
 fn convert_to_draw_point_color(curves: &Vec<DrawCurve>) -> Vec<DrawCanvasCurve> {
     let mut ipg_curves = vec![];
     for curve in curves {
-        let from = convert_to_draw_point(curve.from);
-        let to = convert_to_draw_point(curve.to);
-        let control: Option<DrawCanvasPoint> = 
-            match curve.control {
-                Some(ctrl) => Some(convert_to_draw_point(ctrl)),
-                None => None,
-            };
-            let curve_color = curve.color.unwrap();
-        let color = DrawColor { r: curve_color.r, g: curve_color.g, b: curve_color.b, a: curve_color.a };
+        let mut dp_points = vec![];
+        for point in curve.points.iter() {
+            dp_points.push(convert_to_draw_point(point.clone()));
+        }
+
+        let color = DrawColor { r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
         let width = curve.width;
-        ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, from, to, control, color, width,});
+        ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, points: dp_points, color, width,});
     }
     ipg_curves
 }
