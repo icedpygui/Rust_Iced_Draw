@@ -154,6 +154,15 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 pts.push(cursor_position);
                                 let color = color.clone();
                                 let width = width.clone();
+
+                                if curve_type == "right_triangle" {
+                                    if pts.len() > 1 {
+                                    pts[1].x = pts[0].x;
+                                    }
+                                    if pts.len() > 2 {
+                                        pts[2].y = pts[1].y;
+                                    }
+                                }
                                 // after pushing on the point, we check to see if the count matches
                                 // if so then we return the Curve and set the state to none
                                 // if not, then this is repeated until the count is equaled.
@@ -239,7 +248,7 @@ pub struct DrawCurve {
 
 impl DrawCurve {
     fn draw_all(curves: &[DrawCurve], frame: &mut Frame, _theme: &Theme, curve_to_edit: Option<usize>) {
-
+        // This draw only occrs at the completion of the widget
         for (index, curve) in curves.iter().enumerate() {
             match curve.curve_type {
                 IpgCanvasWidget::None => {
@@ -290,7 +299,19 @@ impl DrawCurve {
                     );
                 },
                 IpgCanvasWidget::PolyLine => {
+                    let path = Path::new(|p| {
+                        p.move_to(curve.points[0]);
+                        for point in curve.points.iter() {
+                            p.line_to(point.clone());
+                        }
+                    });
 
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(curve.color),
+                    );
                 },
                 IpgCanvasWidget::Polygon => {
                     let path = Path::new(|p| {
@@ -392,7 +413,7 @@ impl Pending {
         let mut frame = Frame::new(renderer, bounds.size());
 
         if let Some(cursor_position) = cursor.position_in(bounds) {
-
+            // This draw happens when the mouse is moved and the state is none.
             match self {
                 Pending::N { curve_type, count, points, color, width } => {
                     match curve_type.as_str() {
@@ -618,37 +639,68 @@ impl Pending {
 
                             // if points are not set yet, just draw the lines.
                             } else {
-                                let tr = Path::line(points[0], cursor_position);
+                                let path = Path::new(|p| {
+                                    for index in 0..points.len() {
+                                        if index > 0 {
+                                            p.move_to(points[index-1]);
+                                            p.line_to(points[index]);
+                                        }
+                                    }
+                                    let len = points.len();
+                                    p.move_to(points[len-1]);
+                                    p.line_to(cursor_position);
+                                });
                                 frame.stroke(
-                                &tr,
-                                Stroke::default()
-                                    .with_width(*width)
-                                    .with_color(*color),
-                                )
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
                             }
                         },
                         "right_triangle" => {
-                            if points.len() == *count {
                             let mut pts = points.clone();
-                            pts[count-1] = cursor_position;
-                            let curve = DrawCurve {
-                                curve_type: IpgCanvasWidget::Triangle,
-                                points: pts,
-                                color: *color,
-                                width: *width,
-                            };
+                            if pts.len() > 1 {
+                                pts[1].x = pts[0].x;
+                            }
+                            if pts.len() > 2 {
+                                pts[2].y = pts[1].y;
+                            }
+                            if pts.len() == *count {
+                                pts[count-1] = cursor_position;
+                                let curve = DrawCurve {
+                                    curve_type: IpgCanvasWidget::Triangle,
+                                    points: pts,
+                                    color: *color,
+                                    width: *width,
+                                };
 
-                            DrawCurve::draw_all(&[curve], &mut frame, theme, None);
+                                DrawCurve::draw_all(&[curve], &mut frame, theme, None);
 
                             // if points are not set yet, just draw the lines.
                             } else {
-                                let rtr = Path::line(points[0], cursor_position);
+                                let mut c_pos = cursor_position;
+                                if pts.len() == 1 {
+                                    c_pos.x = pts[0].x;
+                                }
+                                if pts.len() == 2 {
+                                    c_pos.y = pts[1].y;
+                                }
+                                pts.push(c_pos);
+                                let path = Path::new(|p| {
+                                    for index in 0..pts.len() {
+                                        if index > 0 {
+                                            p.move_to(pts[index-1]);
+                                            p.line_to(pts[index]);
+                                        }
+                                    }
+                                });
                                 frame.stroke(
-                                &rtr,
-                                Stroke::default()
-                                    .with_width(*width)
-                                    .with_color(*color),
-                                )
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
                             }
                         },
                         _ => ()

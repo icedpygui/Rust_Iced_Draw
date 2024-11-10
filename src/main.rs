@@ -47,7 +47,6 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
-                dbg!(&curve);
                 self.curves.push(curve);
                 self.state.request_redraw();
             }
