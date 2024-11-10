@@ -1,4 +1,6 @@
 
+use std::f32::consts::PI;
+
 use iced::{mouse, Color, Size};
 use iced::widget::canvas::event::{self, Event};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
@@ -19,27 +21,45 @@ pub enum IpgCanvasWidget {
     RightTriangle,
     Triangle,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq,)]
+pub enum CanvasMode {
+    Edit,
+    Select,
+}
+
+impl CanvasMode {
+    pub fn to_str(&self) -> String {
+        match &self {
+            CanvasMode::Edit => "Edit".to_string(),
+            CanvasMode::Select => "Select".to_string(),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct State {
     cache: canvas::Cache,
-    pub curves: Vec<DrawCurve>,
-    pub selection: IpgCanvasWidget,
-    pub selected_curve_index: usize,
-    pub escape_pressed: bool,
+    pub canvas_mode: CanvasMode,
     pub curve_to_edit: Option<usize>,
+    pub draw_width: f32,
     pub edit_points: Vec<Point>,
+    pub escape_pressed: bool,
+    pub poly_points: usize,
+    pub selection: IpgCanvasWidget,
     pub selected_color_str: Option<String>,
     pub selected_color: Color,
-    pub draw_width: f32,
+    pub selected_curve_index: usize,
 }
 
 impl Default for State {
     fn default() -> Self {
         Self { 
                 cache: canvas::Cache::default(),
-                curves: vec![],
+                canvas_mode: CanvasMode::Select,
                 selection: IpgCanvasWidget::None,
                 selected_curve_index: 0,
+                poly_points: 5,
                 escape_pressed: false,
                 curve_to_edit: None,
                 edit_points: vec![],
@@ -113,19 +133,18 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             };
         match event {
             Event::Mouse(mouse_event) => {
-                // if self.state.escape_pressed {
-                //     *program_state = None;
-                //     return (event::Status::Ignored, None)
-                // }
+                if self.state.escape_pressed {
+                    *program_state = None;
+                    return (event::Status::Ignored, None)
+                }
                 
                 let message = match mouse_event {
                     mouse::Event::ButtonPressed(mouse::Button::Left) => {
+                        if self.state.curve_to_edit.is_some() {
+                            
+                        }
 
-                        // if self.state.curve_to_edit.is_some() {
-                        //     if program_state.is_none() {
-                        //     }
-                        // }
-                    
+
                         match program_state {
                             // First mouse click sets the state of the first Pending point
                             // return a none since no Curve yet
@@ -134,6 +153,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     curve_type,
                                     count: self.state.selected_curve_index,
                                     points: vec![cursor_position],
+                                    poly_points: self.state.poly_points,
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
                                 });
@@ -144,7 +164,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             Some(Pending::N { 
                                     curve_type: _, 
                                     count,
-                                    points ,
+                                    points,
+                                    poly_points,
                                     color,
                                     width,
                             }) => {
@@ -154,6 +175,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 pts.push(cursor_position);
                                 let color = color.clone();
                                 let width = width.clone();
+                                let poly_points = poly_points.clone();
 
                                 if curve_type == "right_triangle" {
                                     if pts.len() > 1 {
@@ -163,22 +185,30 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         pts[2].y = pts[1].y;
                                     }
                                 }
+                                
+                                let count = if curve_type == "polyline".to_string() {
+                                    poly_points
+                                } else {
+                                    *count
+                                };
                                 // after pushing on the point, we check to see if the count matches
                                 // if so then we return the Curve and set the state to none
                                 // if not, then this is repeated until the count is equaled.
-                                if pts.len() == *count {
+                                if pts.len() == count {
                                     *program_state = None;
                                     Some(DrawCurve {
                                         curve_type: widget_type,
                                         points: pts,
+                                        poly_points,
                                         color,
                                         width,
                                     })
                                 } else {
                                     *program_state = Some(Pending::N {
                                         curve_type,
-                                        count: *count,
+                                        count,
                                         points: pts,
+                                        poly_points,
                                         color,
                                         width,
                                     });
@@ -242,6 +272,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
 pub struct DrawCurve {
     pub curve_type: IpgCanvasWidget,
     pub points: Vec<Point>,
+    pub poly_points: usize,
     pub color: Color,
     pub width: f32,
 }
@@ -314,12 +345,26 @@ impl DrawCurve {
                     );
                 },
                 IpgCanvasWidget::Polygon => {
+                    let n = curve.poly_points;
+                    let angle = 0.0-PI/n as f32;
+                    let center = curve.points[0];
+                    let to = curve.points[1];
+                    let radius = center.distance(to) as f32;
+                    let mut points = vec![];
+                    let pi_2_n = 2.0*PI/n as f32;
+
+                    for i in 0..n {
+                        let x = center.x as f32 + radius * (pi_2_n * i as f32 - angle).sin();
+                        let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
+                        points.push(Point { x: x as f32, y: y as f32 });
+                    }
+                    points.push(points[0]);
+
                     let path = Path::new(|p| {
-                        p.move_to(curve.points[0]);
-                        for point in curve.points.iter() {
+                        p.move_to(points[0]);
+                        for point in points.iter() {
                             p.line_to(point.clone());
                         }
-                        p.line_to(curve.points[0]);
                     });
 
                     frame.stroke(
@@ -398,7 +443,7 @@ impl DrawCurve {
 
 #[derive(Debug, Clone)]
 enum Pending {
-    N {curve_type: String, count: usize, points: Vec<Point>, color: Color, width: f32},
+    N {curve_type: String, count: usize, points: Vec<Point>, poly_points: usize, color: Color, width: f32},
     Edit {curve_type: String, edit_index: Option<usize>, points: Vec<Point>, color: Color, width: f32 },
 }
 
@@ -415,7 +460,12 @@ impl Pending {
         if let Some(cursor_position) = cursor.position_in(bounds) {
             // This draw happens when the mouse is moved and the state is none.
             match self {
-                Pending::N { curve_type, count, points, color, width } => {
+                Pending::N { curve_type, 
+                            count, 
+                            points,
+                             poly_points, 
+                             color, 
+                             width } => {
                     match curve_type.as_str() {
                         "bezier" => {
                             // if complete return a curve through draw_all
@@ -425,6 +475,7 @@ impl Pending {
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Bezier,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
@@ -464,13 +515,14 @@ impl Pending {
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Circle,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
 
                             DrawCurve::draw_all(&[curve], &mut frame, theme, None);
 
-                            // if only one point set, draw a line using the cursor
+                            // if only one point set, draw circle using cursor point
                             } else if points.len() == count-1 {
                                 let radius = points[0].distance(cursor_position);
                                 let line = Path::circle(points[0], radius);
@@ -490,6 +542,7 @@ impl Pending {
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Line,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
@@ -507,14 +560,15 @@ impl Pending {
                                 );
                             }
                         },
-                        // if all points set based on the count, return the curve
+                        // if all points set based on the poly_points, return the curve
                         "polyline" => {
-                            if points.len() == *count {
+                            if points.len() == *poly_points {
                             let mut pts = points.clone();
                             pts[count-1] = cursor_position;
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::PolyLine,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
@@ -543,30 +597,39 @@ impl Pending {
                             }
                         },
                         "polygon" => {
-                            if points.len() == *count {
                             let mut pts = points.clone();
-                            pts[count-1] = cursor_position;
+                            if points.len() == *count {
+                                pts[count-1] = cursor_position;
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Polygon,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
 
                             DrawCurve::draw_all(&[curve], &mut frame, theme, None);
 
-                            // if points are not set yet, just draw the lines.
+                            // if points are not set yet, draw polygon with cursor point.
                             } else {
+                                let n = poly_points.clone();
+                                let angle = 0.0-PI/n as f32;
+                                let center = pts[0];
+                                let to = cursor_position;
+                                let radius = center.distance(to) as f32;
+                                let mut points = vec![];
+                                let pi_2_n = 2.0*PI/n as f32;
+                                for i in 0..n {
+                                    let x = center.x as f32 + radius * (pi_2_n * i as f32 - angle).sin();
+                                    let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
+                                    points.push(Point { x: x as f32, y: y as f32 });
+                                }
+                                points.push(points[0]);
                                 let path = Path::new(|p| {
-                                    for index in 0..points.len() {
-                                        if index > 0 {
-                                            p.move_to(points[index-1]);
-                                            p.line_to(points[index]);
-                                        }
+                                    p.move_to(points[0]);
+                                    for point in points.iter() {
+                                        p.line_to(point.clone());
                                     }
-                                    let len = points.len();
-                                    p.move_to(points[len-1]);
-                                    p.line_to(cursor_position);
                                 });
                                 frame.stroke(
                                     &path,
@@ -583,6 +646,7 @@ impl Pending {
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Rectangle,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
@@ -631,6 +695,7 @@ impl Pending {
                             let curve = DrawCurve {
                                 curve_type: IpgCanvasWidget::Triangle,
                                 points: pts,
+                                poly_points: *poly_points,
                                 color: *color,
                                 width: *width,
                             };
@@ -671,6 +736,7 @@ impl Pending {
                                 let curve = DrawCurve {
                                     curve_type: IpgCanvasWidget::Triangle,
                                     points: pts,
+                                    poly_points: *poly_points,
                                     color: *color,
                                     width: *width,
                                 };

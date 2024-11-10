@@ -1,17 +1,18 @@
 //! This example showcases an interactive `Canvas` for drawing Bézier curves.
+use std::fmt::{self, Debug};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
 use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
-use iced::widget::{button, column, container, pick_list, radio, row, text, vertical_space};
+use iced::widget::{button, column, container, pick_list, radio, row, text, text_input, vertical_space};
 use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{IpgCanvasWidget, DrawCurve};
+use draw_canvas::{CanvasMode, DrawCurve, IpgCanvasWidget};
 mod colors;
 
 
@@ -41,6 +42,7 @@ enum Message {
     Load,
     Save,
     ColorSelected(String),
+    PolyInput(String),
 }
 
 impl Example {
@@ -55,41 +57,37 @@ impl Example {
                 self.curves.clear();
             }
             Message::DeleteLast => {
-                if self.state.curves.is_empty() {
+                if self.curves.is_empty() {
                     return
                 }
-                self.state.curves.remove(self.state.curves.len()-1);
+                self.curves.remove(self.curves.len()-1);
                 self.state.request_redraw();
             }
             Message::Edit => {
-                // if self.state.curves.is_empty() {
-                //     return
-                // }
+                if self.state.canvas_mode == CanvasMode::Edit {
+                    self.state.canvas_mode = CanvasMode::Select;
+                } else {
+                    self.state.canvas_mode = CanvasMode::Edit;
+                }
                 
-                // // first edit press sets to curve 0
-                // if self.state.curve_to_edit.is_none() {
-                //     self.state.curve_to_edit = Some(0);
-                // } else {
-                //     let mut edit = self.state.curve_to_edit.unwrap();
-                //     edit += 1;
-                //     if edit > self.state.curves.len()-1 {
-                //         self.state.curve_to_edit = None;
-                //     } else {
-                //         self.state.curve_to_edit = Some(edit);
-                //     }
-                // }
-                // self.state.selection = if self.state.curve_to_edit.is_some() {
-                //     let curve = self.state.curves[self.state.curve_to_edit.unwrap()];
-                //     self.state.edit_points = vec![curve.from, curve.to];
-                //     if curve.control.is_some() {
-                //         self.state.edit_points.push(curve.control.unwrap());
-                //     }
-                //     curve.curve_type
-                // } else {
-                //     IpgCanvasWidget::None
-                // };
+                if self.curves.is_empty() {
+                    return
+                }
                 
-                // self.state.request_redraw();
+                // first edit press sets to curve 0
+                if self.state.curve_to_edit.is_none() {
+                    self.state.curve_to_edit = Some(0);
+                } else {
+                    let mut edit = self.state.curve_to_edit.unwrap();
+                    edit += 1;
+                    if edit > self.curves.len()-1 {
+                        self.state.curve_to_edit = None;
+                    } else {
+                        self.state.curve_to_edit = Some(edit);
+                    }
+                }
+                
+                self.state.request_redraw();
             }
             Message::RadioSelected(choice) => {
                 self.state.selection = choice;
@@ -121,7 +119,7 @@ impl Example {
                     },
                     IpgCanvasWidget::Polygon => {
                         self.state.make_selection(IpgCanvasWidget::Polygon);
-                        self.state.set_indexes(5);
+                        self.state.set_indexes(2);
                         self.state.set_color(Color::WHITE);
                         self.state.set_width(2.0);
                     },
@@ -162,12 +160,12 @@ impl Example {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let curves = serde_json::from_str(&data).expect("Unable to parse");
-                self.state.curves = convert_to_iced_point_color(curves);
+                self.curves = convert_to_iced_point_color(curves);
                 self.state.request_redraw();
             }
             Message::Save => {
                 let path = Path::new("./resources/data.json");
-                let curves = convert_to_draw_point_color(&self.state.curves);
+                let curves = convert_to_draw_point_color(&self.curves);
                 let _ = save(path, &curves);
             }
             Message::ColorSelected(color_str) => {
@@ -180,8 +178,15 @@ impl Example {
                 };
                 self.state.selected_color_str = Some(color_str);
                 self.state.selected_color = Color::from(get_rgba_from_canvas_draw_color(f));
-                    
             },
+            Message::PolyInput(input) => {
+                // little error checking
+                if input != "" {
+                    self.state.poly_points = input.parse().unwrap();
+                } else {
+                    self.state.poly_points = 3;
+                }
+            }
         }
     }
 
@@ -262,35 +267,45 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
+        let mode = self.state.canvas_mode.to_str();
+        let canvas_mode: Element<Message> = text(format!("Mode = {}", mode)).into();
+
         let del_last: Element<Message> = 
             button("Delete Last")
                 .on_press(Message::DeleteLast)
                 .into();
 
-        let color_opt = [
-                                    "Primary".to_string(),
-                                    "Secondary".to_string(),
-                                    "Success".to_string(),
-                                    "Danger".to_string(),
-                                    "White".to_string(),
-                                ];
+        let color_opt = 
+            [
+            "Primary".to_string(),
+            "Secondary".to_string(),
+            "Success".to_string(),
+            "Danger".to_string(),
+            "White".to_string(),
+            ];
+
         let colors: Element<Message> = 
             pick_list(
                 color_opt, 
                 self.state.selected_color_str.clone(), 
                 Message::ColorSelected).into();
 
-        let widths: Element<Message> = text(format!("{}", 2.0)).into();
+        let widths: Element<Message> = text(format!("widths = {}", 2.0)).into();
 
-        let edit: Element<Message> = if self.state.curve_to_edit.is_some() {
-            button("Edit Next")
-                .on_press(Message::Edit)
-                .into()
+        let poly_input = if self.state.poly_points == 0 {
+            ""
         } else {
-             button("Edit Curve")
-                .on_press(Message::Edit)
-                .into()
+            &self.state.poly_points.to_string()
         };
+        let poly_pts_input: Element<Message> = 
+            text_input("Poly Points", poly_input)
+            .on_input(Message::PolyInput)
+            .into();
+
+        let edit: Element<Message> = 
+             button("Change Mode")
+                .on_press(Message::Edit)
+                .into();
         
         let save: Element<Message> = 
             button("Save")
@@ -322,11 +337,13 @@ impl Example {
             rect,
             triangle,
             r_triangle,
-            del_last,
+            canvas_mode,
             edit,
+            poly_pts_input,
             load_save_row,
             colors,
             widths,
+            del_last,
             vertical_space().height(50.0).into(),
             instructions,
             ])
@@ -368,6 +385,7 @@ pub struct DrawCanvasPoint{
 pub struct DrawCanvasCurve {
     curve_type: IpgCanvasWidget,
     points: Vec<DrawCanvasPoint>,
+    poly_points: usize,
     color: DrawColor,
     width: f32,
 }
@@ -398,8 +416,12 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
             dc_points.push(convert_to_iced_point(point.clone()));
         }
         let color = Color{ r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
-        let width = curve.width;
-        iced_curves.push(DrawCurve { curve_type: curve.curve_type, points: dc_points, color, width });
+        iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
+                                    points: dc_points, 
+                                    poly_points: curve.poly_points, 
+                                    color, 
+                                    width: curve.width, 
+                                    });
     }
     iced_curves
 }
@@ -414,7 +436,12 @@ fn convert_to_draw_point_color(curves: &Vec<DrawCurve>) -> Vec<DrawCanvasCurve> 
 
         let color = DrawColor { r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
         let width = curve.width;
-        ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, points: dp_points, color, width,});
+        ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, 
+                                            points: dp_points,
+                                            poly_points: curve.poly_points, 
+                                            color, 
+                                            width,
+                                        });
     }
     ipg_curves
 }
