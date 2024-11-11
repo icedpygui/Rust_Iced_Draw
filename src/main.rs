@@ -37,6 +37,7 @@ enum Message {
     Clear,
     DeleteLast,
     Edit,
+    EditNext,
     RadioSelected(IpgCanvasWidget),
     Event(Event),
     Load,
@@ -49,7 +50,12 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
-                self.curves.push(curve);
+                if self.state.curve_to_edit.is_some() {
+                    self.curves[self.state.curve_to_edit.unwrap()] = curve;
+                } else {
+                    self.curves.push(curve);
+                }
+                
                 self.state.request_redraw();
             }
             Message::Clear => {
@@ -64,31 +70,39 @@ impl Example {
                 self.state.request_redraw();
             }
             Message::Edit => {
+                // edit button toggles mode
                 if self.state.canvas_mode == CanvasMode::Edit {
                     self.state.canvas_mode = CanvasMode::Select;
+                    self.state.curve_to_edit = None;
+                    self.state.request_redraw();
+                    return
                 } else {
                     self.state.canvas_mode = CanvasMode::Edit;
+                    self.state.curve_to_edit = Some(0);
+                    self.state.edit_draw_curve = self.curves[0].clone();
                 }
                 
                 if self.curves.is_empty() {
                     return
                 }
                 
-                // first edit press sets to curve 0
-                if self.state.curve_to_edit.is_none() {
-                    self.state.curve_to_edit = Some(0);
-                } else {
-                    let mut edit = self.state.curve_to_edit.unwrap();
-                    edit += 1;
-                    if edit > self.curves.len()-1 {
-                        self.state.curve_to_edit = None;
-                    } else {
-                        self.state.curve_to_edit = Some(edit);
-                    }
-                }
-                
                 self.state.request_redraw();
-            }
+            },
+            Message::EditNext => {
+                let idx = if self.state.curve_to_edit.is_none() {
+                    return
+                } else {
+                    self.state.curve_to_edit.unwrap()
+                };
+
+                self.state.curve_to_edit = if idx > self.curves.len()-1 {
+                    Some(0)
+                } else {
+                    Some(idx + 1)
+                };
+                self.state.edit_draw_curve = self.curves[self.state.curve_to_edit.unwrap()].clone();
+                self.state.request_redraw();
+            },
             Message::RadioSelected(choice) => {
                 self.state.selection = choice;
                 match choice {
@@ -306,6 +320,11 @@ impl Example {
              button("Change Mode")
                 .on_press(Message::Edit)
                 .into();
+
+        let edit_next: Element<Message> = 
+            button("Edit Next")
+                .on_press(Message::EditNext)
+                .into();
         
         let save: Element<Message> = 
             button("Save")
@@ -339,6 +358,7 @@ impl Example {
             r_triangle,
             canvas_mode,
             edit,
+            edit_next,
             poly_pts_input,
             load_save_row,
             colors,
