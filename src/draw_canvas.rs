@@ -1,5 +1,6 @@
 
 use std::f32::consts::PI;
+use std::sync::{Mutex, MutexGuard};
 
 use iced::{mouse, Color, Size};
 use iced::widget::canvas::event::{self, Event};
@@ -148,7 +149,6 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                         if self.state.curve_to_edit.is_some() {
                             match program_state {
                                 None => {
-                                    dbg!(&self.state.curve_to_edit);
                                     // The first click loads up the Curve
                                     *program_state = Some(Pending::Edit {
                                         curve_type,
@@ -546,6 +546,7 @@ impl Pending {
                              poly_points, 
                              color, 
                              width } => {
+
                     match curve_type.as_str() {
                         "bezier" => {
                             // if complete return a curve through draw_all
@@ -572,8 +573,8 @@ impl Pending {
                                 frame.stroke(
                                     &path,
                                     Stroke::default()
-                                        .with_width(2.0)
-                                        .with_color(theme.palette().text),
+                                        .with_width(*width)
+                                        .with_color(*color),
                                 );
                             
                             // if only one point is set, just draw a line bewteen the point and the cursor point
@@ -582,8 +583,8 @@ impl Pending {
                                 frame.stroke(
                                     &line,
                                     Stroke::default()
-                                        .with_width(2.0)
-                                        .with_color(theme.palette().text),
+                                        .with_width(*width)
+                                        .with_color(*color),
                                 );
                             }
                         },
@@ -849,11 +850,35 @@ impl Pending {
                                 );
                             }
                         },
-                        _ => ()
+                        _=> ()
                     };
                 },
-                // 
-                _ => ()
+                Pending::Edit { 
+                    curve_type, 
+                    curve_to_edit, 
+                    points, 
+                    poly_points, 
+                    color, 
+                    width } => {
+                        match curve_type.as_str() {
+                            "bezier" => {
+                                dbg!(increment_counter());
+                                let mut pts = points.clone();
+                                pts[curve_to_edit.unwrap()] = cursor_position;
+                                
+                                let curve = DrawCurve {
+                                    curve_type: IpgCanvasWidget::Bezier,
+                                    points: pts,
+                                    poly_points: *poly_points,
+                                    color: *color,
+                                    width: *width,
+                                };
+
+                                DrawCurve::draw_all(&[curve], &mut frame, theme, None);
+                            },
+                            _ => (),
+                        }
+                    }
             };
         }
 
@@ -883,3 +908,30 @@ fn find_closest_point_index(cursor: Point, points: &Vec<Point>) -> usize {
     closest_index
 }
 
+#[derive(Debug)]
+pub struct Counter {
+    pub counter: u64, 
+}
+
+pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
+    counter: 0,
+});
+
+pub fn access_counter() -> MutexGuard<'static, Counter> {
+    COUNTER.lock().unwrap()
+}
+
+pub fn reset_counter() {
+    let mut cnt = access_counter();
+    cnt.counter = 0;
+    drop(cnt);
+}
+
+pub fn increment_counter() -> u64 {
+    let mut counter = 0;
+    let mut cnt = access_counter();
+    cnt.counter += 1;
+    counter = cnt.counter;
+    drop(cnt);
+    counter
+}

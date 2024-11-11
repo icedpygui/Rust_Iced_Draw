@@ -1,5 +1,4 @@
 //! This example showcases an interactive `Canvas` for drawing Bézier curves.
-use std::fmt::{self, Debug};
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -12,11 +11,12 @@ use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{CanvasMode, DrawCurve, IpgCanvasWidget};
+use draw_canvas::{reset_counter, CanvasMode, DrawCurve, IpgCanvasWidget};
 mod colors;
 
 
 pub fn main() -> iced::Result {
+    reset_counter();
     iced::application("Drawing Tool - Iced", Example::update, Example::view)
         .theme(|_| Theme::CatppuccinMocha)
         .subscription(Example::subscription)
