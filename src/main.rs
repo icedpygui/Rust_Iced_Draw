@@ -438,7 +438,8 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
         let color = Color{ r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
         iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
                                     points: dc_points, 
-                                    poly_points: curve.poly_points, 
+                                    poly_points: curve.poly_points,
+                                    curve_to_edit: None, 
                                     color, 
                                     width: curve.width, 
                                     });
