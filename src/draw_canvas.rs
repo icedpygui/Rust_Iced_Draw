@@ -44,6 +44,7 @@ pub struct State {
     pub canvas_mode: CanvasMode,
     pub curve_to_edit: Option<usize>,
     pub draw_width: f32,
+    pub first_click: bool,
     pub edit_draw_curve: DrawCurve,
     pub escape_pressed: bool,
     pub poly_points: usize,
@@ -58,6 +59,7 @@ impl Default for State {
         Self { 
                 cache: canvas::Cache::default(),
                 canvas_mode: CanvasMode::Select,
+                first_click: false,
                 curve_to_edit: None,
                 draw_width: 2.0,
                 edit_draw_curve: DrawCurve::default(),
@@ -150,21 +152,47 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             match program_state {
                                 None => {
                                     // The first click loads up the Curve
+                                    // since we're in edit mode, cursor position used.
+                                    let mut pts = self.state.edit_draw_curve.points.clone();
+                                    dbg!(&pts);
+                                    let closest_index = 
+                                        find_closest_point_index(cursor_position, &pts);
+                                    pts[closest_index] = cursor_position;
+                                    
+                                    if curve_type == "right_triangle" {
+                                        if pts.len() > 1 {
+                                        pts[1].x = pts[0].x;
+                                        }
+                                        if pts.len() > 2 {
+                                            pts[2].y = pts[1].y;
+                                        }
+                                    }
                                     *program_state = Some(Pending::Edit {
                                         curve_type,
+                                        first_click: true,
                                         curve_to_edit: self.state.curve_to_edit,
-                                        points: self.state.edit_draw_curve.points.clone(),
+                                        point_to_edit: closest_index,
+                                        points: pts.clone(),
                                         poly_points: self.state.edit_draw_curve.poly_points,
                                         color: self.state.edit_draw_curve.color,
                                         width: self.state.edit_draw_curve.width,
                                     });
-                                    None
+                                    Some(DrawCurve {
+                                        curve_type: widget_type,
+                                        points: pts,
+                                        poly_points: self.state.edit_draw_curve.poly_points,
+                                        first_click: true,
+                                        color: self.state.edit_draw_curve.color,
+                                        width: self.state.edit_draw_curve.width,
+                                    })
                                 },
                                 // The second click is a Some() since it was created above
                                 // The pending is carrying the previous info
                                 Some(Pending::Edit { 
-                                        curve_type: _, 
+                                        curve_type: _,
+                                        first_click: _, 
                                         curve_to_edit: _,
+                                        point_to_edit,
                                         points,
                                         poly_points,
                                         color,
@@ -172,11 +200,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 }) => {
                                     // we clone here because if we don't the state cannot be 
                                     // set to none because it would be borrowed if we use it.
-
                                     let mut pts = points.clone();
-                                    let closest_index = 
-                                        find_closest_point_index(cursor_position, &points);
-                                    pts[closest_index] = cursor_position;
+                                    pts[*point_to_edit] = cursor_position;
                                     let color = color.clone();
                                     let width = width.clone();
                                     let poly_points = poly_points.clone();
@@ -189,13 +214,14 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             pts[2].y = pts[1].y;
                                         }
                                     }
-                                    
+                                    // second click ends the editing and returns to the 
+                                    // main update() AddCurve 
                                     *program_state = None;
                                     Some(DrawCurve {
                                         curve_type: widget_type,
                                         points: pts,
                                         poly_points,
-                                        curve_to_edit: None,
+                                        first_click: false,
                                         color,
                                         width,
                                     })
@@ -204,6 +230,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             }
                                 
                         } else {
+                            // adding an new curve
                             match program_state {
                                 // First mouse click sets the state of the first Pending point
                                 // return a none since no Curve yet
@@ -259,7 +286,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             curve_type: widget_type,
                                             points: pts,
                                             poly_points,
-                                            curve_to_edit: None,
+                                            first_click: false,
                                             color,
                                             width,
                                         })
@@ -298,7 +325,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
     ) -> Vec<Geometry> {
         let content =
             self.state.cache.draw(renderer, bounds.size(), |frame| {
-                DrawCurve::draw_all(self.curves, frame, theme, self.state.curve_to_edit);
+                DrawCurve::draw_all(self.curves, frame, theme, self.state.curve_to_edit, self.state.first_click);
 
                 frame.stroke(
                     &Path::rectangle(Point::ORIGIN, frame.size()),
@@ -334,34 +361,53 @@ pub struct DrawCurve {
     pub curve_type: IpgCanvasWidget,
     pub points: Vec<Point>,
     pub poly_points: usize,
-    pub curve_to_edit: Option<usize>,
+    pub first_click: bool,
     pub color: Color,
     pub width: f32,
 }
 
 impl DrawCurve {
-    fn draw_all(curves: &[DrawCurve], frame: &mut Frame, _theme: &Theme, curve_to_edit: Option<usize>) {
+    fn draw_all(curves: &[DrawCurve], frame: &mut Frame, _theme: &Theme, 
+                curve_to_edit: Option<usize>,
+                first_click: bool) {
         // This draw only occurs at the completion of the widget(update occurs) and if cache is cleared
         for (index, curve) in curves.iter().enumerate() {
+            if curve_to_edit.is_some() && 
+                index == curve_to_edit.unwrap() && 
+                (curve.first_click || first_click){
+                // skip in after first click
+                continue;
+            } else if curve_to_edit.is_some() && 
+                    index == curve_to_edit.unwrap() {
+                    let path = Path::new(|p| {
+                        for point in curve.points.iter() {
+                            p.circle(point.clone(), 2.0);
+                        }
+                    });
+    
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(curve.color),
+                    );
+            }
+            
             match curve.curve_type {
                 IpgCanvasWidget::None => {
                     ()
                 },
                 IpgCanvasWidget::Bezier => {
-                    if curve_to_edit.is_some() && index == curve_to_edit.unwrap() {
-                        
-                    } else {
-                        let path = Path::new(|p| {
-                            p.move_to(curve.points[0]);
-                            p.quadratic_curve_to(curve.points[2], curve.points[1]);
-                        });
-                        frame.stroke(
-                            &path,
-                            Stroke::default()
-                                .with_width(curve.width)
-                                .with_color(curve.color),
-                        );
-                    }
+                    let path = Path::new(|p| {
+                        p.move_to(curve.points[0]);
+                        p.quadratic_curve_to(curve.points[2], curve.points[1]);
+                    });
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(curve.width)
+                            .with_color(curve.color),
+                    );
                 },
                 IpgCanvasWidget::Circle => {
                     let path = Path::new(|p| {
@@ -530,7 +576,14 @@ impl DrawCurve {
 #[derive(Debug, Clone)]
 enum Pending {
     N {curve_type: String, count: usize, points: Vec<Point>, poly_points: usize, color: Color, width: f32},
-    Edit {curve_type: String, curve_to_edit: Option<usize>, points: Vec<Point>, poly_points: usize, color: Color, width: f32 },
+    Edit {curve_type: String, 
+            first_click: bool, 
+            curve_to_edit: Option<usize>,
+            point_to_edit: usize, 
+            points: Vec<Point>, 
+            poly_points: usize, 
+            color: Color, 
+            width: f32 },
 }
 
 impl Pending {
@@ -541,6 +594,7 @@ impl Pending {
         bounds: Rectangle,
         cursor: mouse::Cursor,
     ) -> Geometry {
+        let _ = theme;
         let mut frame = Frame::new(renderer, bounds.size());
 
         if let Some(cursor_position) = cursor.position_in(bounds) {
@@ -592,7 +646,7 @@ impl Pending {
                                         .with_color(*color),
                                 );
                             }
-                        }
+                        },
                         "line" => {
                             // if only one point set, draw a line using the cursor
                             if points.len() == count-1 {
@@ -745,17 +799,18 @@ impl Pending {
                     };
                 },
                 Pending::Edit { 
-                    curve_type, 
-                    curve_to_edit, 
+                    curve_type,
+                    first_click: _, 
+                    curve_to_edit,
+                    point_to_edit, 
                     points, 
                     poly_points, 
                     color, 
                     width } => {
                         match curve_type.as_str() {
                             "bezier" => {
-                                dbg!(increment_counter());
                                 let mut pts = points.clone();
-                                pts[curve_to_edit.unwrap()] = cursor_position;
+                                pts[*point_to_edit] = cursor_position;
                                 
                                 let path = Path::new(|p| {
                                     p.move_to(pts[0]);
@@ -768,6 +823,159 @@ impl Pending {
                                         .with_width(*width)
                                         .with_color(*color),
                                 );
+                            },
+                            "circle" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                let radius = pts[0].distance(pts[1]);
+                                let line = Path::circle(points[0], radius);
+                                frame.stroke(
+                                    &line,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                            },
+                            "line" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                let line = Path::line(pts[0], pts[1]);
+                                frame.stroke(
+                                    &line,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                            },
+                            "polyline" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                let path = Path::new(|p| {
+                                    for index in 0..pts.len() {
+                                        if index > 0 {
+                                            p.move_to(points[index-1]);
+                                            p.line_to(points[index]);
+                                        }
+                                    }
+                                });
+                                frame.stroke(
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                            },
+                            "polygon" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                let n = poly_points.clone();
+                                let angle = 0.0-PI/n as f32;
+                                let center = pts[0];
+                                let to = cursor_position;
+                                let radius = center.distance(to) as f32;
+                                let mut points = vec![];
+                                let pi_2_n = 2.0*PI/n as f32;
+                                for i in 0..n {
+                                    let x = center.x as f32 + radius * (pi_2_n * i as f32 - angle).sin();
+                                    let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
+                                    points.push(Point { x: x as f32, y: y as f32 });
+                                }
+                                points.push(pts[0]);
+                                let path = Path::new(|p| {
+                                    p.move_to(points[0]);
+                                    for point in points.iter() {
+                                        p.line_to(point.clone());
+                                    }
+                                });
+                                frame.stroke(
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                                
+                            },
+                            "rectangle" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                let rect_width = (pts[0].x-pts[1].x).abs();
+                                let height = (pts[0].y-pts[1].y).abs();
+                                
+                                let top_left = if pts[0].x < pts[1].x && pts[0].y > pts[1].y {
+                                    // top right
+                                    Some(Point{ x: pts[0].x, y: pts[0].y-height })
+                                } else if pts[0].x > pts[1].x && pts[0].y > pts[1].y {
+                                    //  top left
+                                    Some(Point{x: points[0].x-rect_width, y: pts[1].y})
+                                } else if pts[0].x > pts[1].x  && pts[0].y < pts[1].y {
+                                    // bottom left
+                                    Some(Point{ x: pts[1].x, y: pts[0].y })
+                                } else if pts[1].x > pts[0].x && pts[1].y > pts[0].y {
+                                    // bottom right
+                                    Some(pts[0])
+                                } else {
+                                    None
+                                };
+
+                                let rect = if top_left.is_some() {
+                                        let size = Size{ width: rect_width, height };
+                                    Path::rectangle(top_left.unwrap(), size)
+                                    } else {
+                                        Path::line(points[0], cursor_position)
+                                    };
+                                frame.stroke(
+                                &rect,
+                                Stroke::default()
+                                    .with_width(*width)
+                                    .with_color(*color),
+                                )
+                                
+                            },
+                            "triangle" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                pts.push(pts[0]);
+                                let path = Path::new(|p| {
+                                    for index in 0..pts.len() {
+                                        if index > 0 {
+                                            p.move_to(pts[index-1]);
+                                            p.line_to(pts[index]);
+                                        }
+                                    }
+                                });
+                                frame.stroke(
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                            },
+                            "right_triangle" => {
+                                let mut pts = points.clone();
+                                pts[*point_to_edit] = cursor_position;
+                                
+                                if pts.len() > 1 {
+                                    pts[1].x = pts[0].x;
+                                }
+                                if pts.len() > 2 {
+                                    pts[2].y = pts[1].y;
+                                }
+                                pts.push(pts[0]);
+                                let path = Path::new(|p| {
+                                    for index in 0..pts.len() {
+                                        if index > 0 {
+                                            p.move_to(pts[index-1]);
+                                            p.line_to(pts[index]);
+                                        }
+                                    }
+                                });
+                                frame.stroke(
+                                    &path,
+                                    Stroke::default()
+                                        .with_width(*width)
+                                        .with_color(*color),
+                                );
+                                
                             },
                             _ => (),
                         }
@@ -827,4 +1035,33 @@ pub fn increment_counter() -> u64 {
     counter = cnt.counter;
     drop(cnt);
     counter
+}
+
+
+#[test]
+fn test_find_closest_point_index() {
+    let cursor = Point {
+        x: 150.0,
+        y: 160.0,
+    };
+    let points  = vec![
+        Point {
+            x: 126.422,
+            y: 94.05606,
+        },
+        Point {
+            x: 169.99988,
+            y: 162.48233,
+        },
+        Point {
+            x: 234.4834,
+            y: 101.7688,
+        },
+    ];
+    for i in 0..3 {
+        dbg!(cursor.distance(points[i]));
+    }
+    
+    let closest = find_closest_point_index(cursor, &points);
+    dbg!(closest);
 }

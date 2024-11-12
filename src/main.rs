@@ -50,10 +50,12 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
+                dbg!("addcurve");
                 if self.state.curve_to_edit.is_some() {
                     self.curves[self.state.curve_to_edit.unwrap()] = curve;
                 } else {
                     self.curves.push(curve);
+                    
                 }
                 
                 self.state.request_redraw();
@@ -89,16 +91,17 @@ impl Example {
                 self.state.request_redraw();
             },
             Message::EditNext => {
-                let idx = if self.state.curve_to_edit.is_none() {
+                let mut idx = if self.state.curve_to_edit.is_none() {
                     return
                 } else {
                     self.state.curve_to_edit.unwrap()
                 };
-
+                
+                idx += 1;
                 self.state.curve_to_edit = if idx > self.curves.len()-1 {
                     Some(0)
                 } else {
-                    Some(idx + 1)
+                    Some(idx)
                 };
                 self.state.edit_draw_curve = self.curves[self.state.curve_to_edit.unwrap()].clone();
                 self.state.request_redraw();
@@ -439,7 +442,7 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
         iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
                                     points: dc_points, 
                                     poly_points: curve.poly_points,
-                                    curve_to_edit: None, 
+                                    first_click: false, 
                                     color, 
                                     width: curve.width, 
                                     });
