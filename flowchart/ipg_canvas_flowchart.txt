@@ -7,37 +7,40 @@ select "New" -> Not working
 
 select "edit"
     go to main -> update -> Message::Edit 
-    set state.canvas_mode = CanvasMode::Edit;
-    set state.edit_curve_index = Some(0);
-    set state.edit_draw_curve
-    clear cache
+        set state.canvas_mode = CanvasMode::Edit;
+        set state.edit_curve_index = Some(0);
+        set state.edit_draw_curve
+        clear cache
 
     go to main -> view
-        go to State -> view -> DrawPending -> update()
-            wait for mouse press event
+        go to State -> view -> Canvas::new() -> 
+            DrawPending -> DrawCurve -> draw_all()
+                if edit -> display curves with circles and center point
+                wait for mouse press event
 
-Event -> mouse_left pressed (if in canvas)
+1st Event -> mouse_left pressed (if in canvas)
         go to State -> view -> DrawPending -> update()
+            if edit -> match program_state
+                initialize Pending::Edit
+                    set mid_point or a curve point to cursor position
+                initialize DrawCurve with same data as Pending::Edit,
+                    this results in return some() -> 
+                    go to main -> update -> Message::AddCurve
+                        if edit -> modify index of curve
+                        if new -> append curve
+                    go to main -> view
+                    go to State -> view -> Canvas::new() -> 
+                        DrawPending -> DrawCurve -> draw_all()
+                            if edit -> skip the curve being editied so 
+                            that when the mouse moves showing the curve
+                            the old curve is not present.
+                            if new -> display curves
+                            wait for mouse press event 
         
-
-go to DrawCurve::draw_all()
-    display curves with circles and center point
-
-1st click in canvas nearest edit point
-go to update
-    sub in cursor positon for either a point or mid point
-    fill in Pending::edit
-    fill in DrawCurve -> need a refresh
-go to Message AddCurve
-go to DrawCurve draw_all()
-go to Pending draw()
-do while cursor moves
-    go to pending draw
-    sub in cursor positon for either a point or mid point
-
-2nd click in canvas
-go to update
-    sub in cursor positon for either a point or mid point
-    fill in DrawCurve
-go to Message::AddCurve
+2nd Event -> mouse_left pressed (if in canvas)
+    go to State -> view -> DrawPending -> update()
+    if edit -> match program_state
+        sub in cursor positon for either a point or mid point
+        update and return the DrawCurve
+        go to Message::AddCurve
 

@@ -11,7 +11,7 @@ use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{CanvasMode, DrawCurve, IpgCanvasWidget};
+use draw_canvas::{get_mid_geometry, CanvasMode, DrawCurve, IpgCanvasWidget};
 mod colors;
 
 
@@ -51,6 +51,8 @@ impl Example {
             Message::AddCurve(curve) => {
                 if self.state.edit_curve_index.is_some() {
                     self.curves[self.state.edit_curve_index.unwrap()] = curve.clone();
+                    // update the mid point, in case of a change
+                    self.state.edit_draw_curve.mid_point = curve.mid_point.clone();
                     self.state.edit_draw_curve = curve;
                 } else {
                     self.curves.push(curve);
@@ -71,17 +73,24 @@ impl Example {
                 self.state.request_redraw();
             }
             Message::ModeSelected(mode) => {
-                if self.curves.is_empty() {
-                    return
-                }
-
                 self.state.canvas_mode = CanvasMode::to_enum(mode.clone());
                 
-                if mode == "Edit" {
-                    self.state.edit_curve_index = Some(0);
-                    self.state.edit_draw_curve = self.curves[0].clone();
+                match self.state.canvas_mode {
+                    CanvasMode::None => {
+                        self.state.edit_curve_index = None;
+                    },
+                    CanvasMode::Edit => {
+                        if self.curves.is_empty() {
+                            return
+                        }
+                        self.state.edit_curve_index = Some(0);
+                        self.state.edit_draw_curve = self.curves[0].clone();
+                    },
+                    CanvasMode::New => {
+                        self.state.edit_curve_index = None;
+                    },
                 }
-
+                
                 self.state.request_redraw();
             },
             Message::EditNext => {
@@ -97,11 +106,12 @@ impl Example {
                 } else {
                     Some(idx)
                 };
+
                 self.state.edit_draw_curve = self.curves[self.state.edit_curve_index.unwrap()].clone();
                 self.state.request_redraw();
             },
             Message::RadioSelected(choice) => {
-                self.state.selection = choice;
+                self.state.curve_type = choice;
                 self.state.canvas_mode = CanvasMode::New;
                 match choice {
                     IpgCanvasWidget::None => (),
@@ -172,7 +182,8 @@ impl Example {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let curves = serde_json::from_str(&data).expect("Unable to parse");
-                self.curves = convert_to_iced_point_color(curves);
+                self.curves = convert_to_draw_curve_type(curves);
+                self.curves = add_mid_point(self.curves.clone());
                 self.state.request_redraw();
             }
             Message::Save => {
@@ -219,7 +230,7 @@ impl Example {
             radio(
                 "Beizer",
                 IpgCanvasWidget::Bezier,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -227,7 +238,7 @@ impl Example {
             radio(
                 "Circle",
                 IpgCanvasWidget::Circle,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -235,7 +246,7 @@ impl Example {
             radio(
                 "Line",
                 IpgCanvasWidget::Line,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -243,7 +254,7 @@ impl Example {
         radio(
             "Polygon",
             IpgCanvasWidget::Polygon,
-            Some(self.state.selection),
+            Some(self.state.curve_type),
             Message::RadioSelected,
             ).into();
 
@@ -251,7 +262,7 @@ impl Example {
             radio(
                 "PolyLine",
                 IpgCanvasWidget::PolyLine,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -259,7 +270,7 @@ impl Example {
             radio(
                 "Rectangle",
                 IpgCanvasWidget::Rectangle,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -267,7 +278,7 @@ impl Example {
             radio(
                 "Triangle",
                 IpgCanvasWidget::Triangle,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
@@ -275,11 +286,12 @@ impl Example {
             radio(
                 "Right Triangle",
                 IpgCanvasWidget::RightTriangle,
-                Some(self.state.selection),
+                Some(self.state.curve_type),
                 Message::RadioSelected,
                 ).into();
 
         let mode = self.state.canvas_mode.string();
+
         let canvas_mode: Element<Message> = text(format!("Mode = {}", mode)).into();
 
         let del_last: Element<Message> = 
@@ -430,7 +442,7 @@ impl DrawColor {
     }
 }
 
-fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
+fn convert_to_draw_curve_type(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
     let mut iced_curves = vec![];
     for curve in curves {
         let mut dc_points = vec![];
@@ -441,7 +453,7 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
         iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
                                     points: dc_points, 
                                     poly_points: curve.poly_points,
-                                    edit_mid_point: None,
+                                    mid_point: Point::default(),
                                     first_click: false, 
                                     color, 
                                     width: curve.width, 
@@ -477,3 +489,10 @@ fn convert_to_draw_point(point: Point) -> DrawCanvasPoint {
     DrawCanvasPoint { x: point.x, y: point.y }
 }
 
+fn add_mid_point(mut curves: Vec<DrawCurve>) -> Vec<DrawCurve> {
+    for curve in curves.iter_mut() {
+        let mid = get_mid_geometry(&curve.points, curve.curve_type);
+        curve.mid_point = mid;
+    }
+    curves
+}
