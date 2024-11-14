@@ -35,7 +35,7 @@ enum Message {
     AddCurve(draw_canvas::DrawCurve),
     Clear,
     DeleteLast,
-    Edit,
+    ModeSelected(String),
     EditNext,
     RadioSelected(IpgCanvasWidget),
     Event(Event),
@@ -49,8 +49,8 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
-                if self.state.curve_to_edit.is_some() {
-                    self.curves[self.state.curve_to_edit.unwrap()] = curve.clone();
+                if self.state.edit_curve_index.is_some() {
+                    self.curves[self.state.edit_curve_index.unwrap()] = curve.clone();
                     self.state.edit_draw_curve = curve;
                 } else {
                     self.curves.push(curve);
@@ -70,43 +70,39 @@ impl Example {
                 self.curves.remove(self.curves.len()-1);
                 self.state.request_redraw();
             }
-            Message::Edit => {
-                // edit button toggles mode
-                if self.state.canvas_mode == CanvasMode::Edit {
-                    self.state.canvas_mode = CanvasMode::Select;
-                    self.state.curve_to_edit = None;
-                    self.state.request_redraw();
-                    return
-                } else {
-                    self.state.canvas_mode = CanvasMode::Edit;
-                    self.state.curve_to_edit = Some(0);
-                    self.state.edit_draw_curve = self.curves[0].clone();
-                }
-                
+            Message::ModeSelected(mode) => {
                 if self.curves.is_empty() {
                     return
                 }
+
+                self.state.canvas_mode = CanvasMode::to_enum(mode.clone());
                 
+                if mode == "Edit" {
+                    self.state.edit_curve_index = Some(0);
+                    self.state.edit_draw_curve = self.curves[0].clone();
+                }
+
                 self.state.request_redraw();
             },
             Message::EditNext => {
-                let mut idx = if self.state.curve_to_edit.is_none() {
+                let mut idx = if self.state.edit_curve_index.is_none() {
                     return
                 } else {
-                    self.state.curve_to_edit.unwrap()
+                    self.state.edit_curve_index.unwrap()
                 };
                 
                 idx += 1;
-                self.state.curve_to_edit = if idx > self.curves.len()-1 {
+                self.state.edit_curve_index = if idx > self.curves.len()-1 {
                     Some(0)
                 } else {
                     Some(idx)
                 };
-                self.state.edit_draw_curve = self.curves[self.state.curve_to_edit.unwrap()].clone();
+                self.state.edit_draw_curve = self.curves[self.state.edit_curve_index.unwrap()].clone();
                 self.state.request_redraw();
             },
             Message::RadioSelected(choice) => {
                 self.state.selection = choice;
+                self.state.canvas_mode = CanvasMode::New;
                 match choice {
                     IpgCanvasWidget::None => (),
                     IpgCanvasWidget::Bezier => {
@@ -318,10 +314,14 @@ impl Example {
             .on_input(Message::PolyInput)
             .into();
 
-        let edit: Element<Message> = 
-             button("Change Mode")
-                .on_press(Message::Edit)
-                .into();
+        
+        let mode_options = vec!["None".to_string(), "New".to_string(), "Edit".to_string()];
+        let mode: Element<Message> = 
+        pick_list(
+            mode_options, 
+            Some(self.state.canvas_mode.string()), 
+            Message::ModeSelected).into();
+
 
         let edit_next: Element<Message> = 
             button("Edit Next")
@@ -359,7 +359,7 @@ impl Example {
             triangle,
             r_triangle,
             canvas_mode,
-            edit,
+            mode,
             edit_next,
             poly_pts_input,
             load_save_row,
@@ -441,7 +441,7 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
         iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
                                     points: dc_points, 
                                     poly_points: curve.poly_points,
-                                    point_for_moving: None,
+                                    edit_mid_point: None,
                                     first_click: false, 
                                     color, 
                                     width: curve.width, 

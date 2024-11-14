@@ -1,0 +1,43 @@
+click button "load"
+    go to main -> update -> Message::Load
+        initlize self.curves
+        clear cache -> displays curves
+
+select "New" -> Not working
+
+select "edit"
+    go to main -> update -> Message::Edit 
+    set state.canvas_mode = CanvasMode::Edit;
+    set state.edit_curve_index = Some(0);
+    set state.edit_draw_curve
+    clear cache
+
+    go to main -> view
+        go to State -> view -> DrawPending -> update()
+            wait for mouse press event
+
+Event -> mouse_left pressed (if in canvas)
+        go to State -> view -> DrawPending -> update()
+        
+
+go to DrawCurve::draw_all()
+    display curves with circles and center point
+
+1st click in canvas nearest edit point
+go to update
+    sub in cursor positon for either a point or mid point
+    fill in Pending::edit
+    fill in DrawCurve -> need a refresh
+go to Message AddCurve
+go to DrawCurve draw_all()
+go to Pending draw()
+do while cursor moves
+    go to pending draw
+    sub in cursor positon for either a point or mid point
+
+2nd click in canvas
+go to update
+    sub in cursor positon for either a point or mid point
+    fill in DrawCurve
+go to Message::AddCurve
+
