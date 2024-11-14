@@ -11,12 +11,11 @@ use iced::{event, keyboard, Color, Element, Event, Point, Subscription, Theme};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{reset_counter, CanvasMode, DrawCurve, IpgCanvasWidget};
+use draw_canvas::{CanvasMode, DrawCurve, IpgCanvasWidget};
 mod colors;
 
 
 pub fn main() -> iced::Result {
-    reset_counter();
     iced::application("Drawing Tool - Iced", Example::update, Example::view)
         .theme(|_| Theme::CatppuccinMocha)
         .subscription(Example::subscription)
@@ -50,9 +49,9 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(curve) => {
-                dbg!("addcurve");
                 if self.state.curve_to_edit.is_some() {
-                    self.curves[self.state.curve_to_edit.unwrap()] = curve;
+                    self.curves[self.state.curve_to_edit.unwrap()] = curve.clone();
+                    self.state.edit_draw_curve = curve;
                 } else {
                     self.curves.push(curve);
                     
@@ -284,7 +283,7 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let mode = self.state.canvas_mode.to_str();
+        let mode = self.state.canvas_mode.string();
         let canvas_mode: Element<Message> = text(format!("Mode = {}", mode)).into();
 
         let del_last: Element<Message> = 
@@ -442,6 +441,7 @@ fn convert_to_iced_point_color(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
         iced_curves.push(DrawCurve { curve_type: curve.curve_type, 
                                     points: dc_points, 
                                     poly_points: curve.poly_points,
+                                    point_for_moving: None,
                                     first_click: false, 
                                     color, 
                                     width: curve.width, 

@@ -1,6 +1,5 @@
 
 use std::f32::consts::PI;
-use std::sync::{Mutex, MutexGuard};
 
 use iced::{mouse, Color, Size};
 use iced::widget::canvas::event::{self, Event};
@@ -29,8 +28,9 @@ pub enum CanvasMode {
     Select,
 }
 
+// used to display text widget
 impl CanvasMode {
-    pub fn to_str(&self) -> String {
+    pub fn string(&self) -> String {
         match &self {
             CanvasMode::Edit => "Edit".to_string(),
             CanvasMode::Select => "Select".to_string(),
@@ -128,17 +128,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
         } else {
             self.state.selection
         };
-        let (curve_type, widget_type) = match selection {
-                                IpgCanvasWidget::None => ("".to_string(), IpgCanvasWidget::None),
-                                IpgCanvasWidget::Bezier => ("bezier".to_string(), IpgCanvasWidget::Bezier),
-                                IpgCanvasWidget::Circle => ("circle".to_string(), IpgCanvasWidget::Circle),  
-                                IpgCanvasWidget::Line => ("line".to_string(), IpgCanvasWidget::Line),
-                                IpgCanvasWidget::PolyLine => ("polyline".to_string(), IpgCanvasWidget::PolyLine),
-                                IpgCanvasWidget::Rectangle => ("rectangle".to_string(), IpgCanvasWidget::Rectangle),
-                                IpgCanvasWidget::Polygon => ("polygon".to_string(), IpgCanvasWidget::Polygon),
-                                IpgCanvasWidget::RightTriangle => ("right_triangle".to_string(), IpgCanvasWidget::RightTriangle),
-                                IpgCanvasWidget::Triangle => ("triangle".to_string(), IpgCanvasWidget::Triangle),
-                            };
+        
         match event {
             Event::Mouse(mouse_event) => {
                 if self.state.escape_pressed {
@@ -154,33 +144,44 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // The first click loads up the Curve
                                     // since we're in edit mode, cursor position used.
                                     let mut pts = self.state.edit_draw_curve.points.clone();
-                                    dbg!(&pts);
+                                    let mut point_for_moving: Option<Point> = Some(get_mid_geometry(&pts, selection));
+                                    // push the mid_point onto pts for find close()
+                                    // then remove to use.
+                                    pts.push(point_for_moving.unwrap());
                                     let closest_index = 
                                         find_closest_point_index(cursor_position, &pts);
                                     pts[closest_index] = cursor_position;
+                                    if closest_index == pts.len() {
+                                        point_for_moving = Some(pts.remove(pts.len()-1));
+                                    } else {
+                                        point_for_moving = None;
+                                    }
                                     
-                                    if curve_type == "right_triangle" {
+                                    if selection == IpgCanvasWidget::Triangle {
                                         if pts.len() > 1 {
                                         pts[1].x = pts[0].x;
                                         }
                                         if pts.len() > 2 {
                                             pts[2].y = pts[1].y;
-                                        }
                                     }
+                                    }
+                                    
                                     *program_state = Some(Pending::Edit {
-                                        curve_type,
+                                        curve_type: selection,
                                         first_click: true,
                                         curve_to_edit: self.state.curve_to_edit,
                                         point_to_edit: closest_index,
+                                        point_for_moving,
                                         points: pts.clone(),
                                         poly_points: self.state.edit_draw_curve.poly_points,
                                         color: self.state.edit_draw_curve.color,
                                         width: self.state.edit_draw_curve.width,
                                     });
                                     Some(DrawCurve {
-                                        curve_type: widget_type,
+                                        curve_type: selection,
                                         points: pts,
                                         poly_points: self.state.edit_draw_curve.poly_points,
+                                        point_for_moving,
                                         first_click: true,
                                         color: self.state.edit_draw_curve.color,
                                         width: self.state.edit_draw_curve.width,
@@ -189,10 +190,11 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 // The second click is a Some() since it was created above
                                 // The pending is carrying the previous info
                                 Some(Pending::Edit { 
-                                        curve_type: _,
+                                        curve_type,
                                         first_click: _, 
                                         curve_to_edit: _,
                                         point_to_edit,
+                                        point_for_moving,
                                         points,
                                         poly_points,
                                         color,
@@ -201,12 +203,21 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // we clone here because if we don't the state cannot be 
                                     // set to none because it would be borrowed if we use it.
                                     let mut pts = points.clone();
-                                    pts[*point_to_edit] = cursor_position;
+                                    // Since points_to_move was found using closest point,
+                                    // point_to_edit pointed to it therefore skip when some()
+                                    pts = if point_for_moving.is_none() {
+                                        pts[*point_to_edit] = cursor_position;
+                                        pts
+                                    }  else {
+                                        translate_geometry(pts, cursor_position, *curve_type)
+                                    };
+                                    
                                     let color = color.clone();
                                     let width = width.clone();
                                     let poly_points = poly_points.clone();
+                                    let point_for_moving = None;
 
-                                    if curve_type == "right_triangle" {
+                                    if selection == IpgCanvasWidget::RightTriangle {
                                         if pts.len() > 1 {
                                         pts[1].x = pts[0].x;
                                         }
@@ -218,9 +229,10 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // main update() AddCurve 
                                     *program_state = None;
                                     Some(DrawCurve {
-                                        curve_type: widget_type,
+                                        curve_type: selection,
                                         points: pts,
                                         poly_points,
+                                        point_for_moving,
                                         first_click: false,
                                         color,
                                         width,
@@ -236,7 +248,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 // return a none since no Curve yet
                                 None => {
                                     *program_state = Some(Pending::N {
-                                        curve_type,
+                                        curve_type: selection,
                                         count: self.state.selected_curve_index,
                                         points: vec![cursor_position],
                                         poly_points: self.state.poly_points,
@@ -262,8 +274,9 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     let color = color.clone();
                                     let width = width.clone();
                                     let poly_points = poly_points.clone();
+                                    let point_for_moving = None;
 
-                                    if curve_type == "right_triangle" {
+                                    if selection == IpgCanvasWidget::RightTriangle {
                                         if pts.len() > 1 {
                                         pts[1].x = pts[0].x;
                                         }
@@ -272,7 +285,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         }
                                     }
                                     
-                                    let count = if curve_type == "polyline".to_string() {
+                                    let count = if selection == IpgCanvasWidget::PolyLine {
                                         poly_points
                                     } else {
                                         *count
@@ -283,16 +296,17 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     if pts.len() == count {
                                         *program_state = None;
                                         Some(DrawCurve {
-                                            curve_type: widget_type,
+                                            curve_type: selection,
                                             points: pts,
                                             poly_points,
+                                            point_for_moving,
                                             first_click: false,
                                             color,
                                             width,
                                         })
                                     } else {
                                         *program_state = Some(Pending::N {
-                                            curve_type,
+                                            curve_type: selection,
                                             count,
                                             points: pts,
                                             poly_points,
@@ -361,6 +375,7 @@ pub struct DrawCurve {
     pub curve_type: IpgCanvasWidget,
     pub points: Vec<Point>,
     pub poly_points: usize,
+    pub point_for_moving: Option<Point>,
     pub first_click: bool,
     pub color: Color,
     pub width: f32,
@@ -375,13 +390,17 @@ impl DrawCurve {
             if curve_to_edit.is_some() && 
                 index == curve_to_edit.unwrap() && 
                 (curve.first_click || first_click){
-                // skip in after first click
+                // skip after first click
+                dbg!("first click");
                 continue;
             } else if curve_to_edit.is_some() && 
                     index == curve_to_edit.unwrap() {
                     let path = Path::new(|p| {
                         for point in curve.points.iter() {
                             p.circle(point.clone(), 2.0);
+                        }
+                        if curve.point_for_moving.is_some() {
+                            p.circle(curve.point_for_moving.unwrap(), 3.0);
                         }
                     });
     
@@ -552,34 +571,23 @@ impl DrawCurve {
             }
         }
 
-        // if editing a curve, draw a circle at each point
-        // for (index, curve) in curves.iter().enumerate() {
-        //     if curve_to_edit.is_some() && curve_to_edit == Some(index) {
-        //         let path = Path::new(|p| {
-        //             for point in curve.points.iter() {
-        //                 p.circle(point.clone(), 2.0);
-        //             }
-        //         });
-
-        //         frame.stroke(
-        //             &path,
-        //             Stroke::default()
-        //                 .with_width(curve.width)
-        //                 .with_color(curve.color),
-        //         );
-        //     }
-        // }
-
     }
 }
 
 #[derive(Debug, Clone)]
 enum Pending {
-    N {curve_type: String, count: usize, points: Vec<Point>, poly_points: usize, color: Color, width: f32},
-    Edit {curve_type: String, 
+    N {curve_type: IpgCanvasWidget, 
+        count: usize, 
+        points: Vec<Point>, 
+        poly_points: usize, 
+        color: Color, 
+        width: f32},
+
+    Edit {curve_type: IpgCanvasWidget, 
             first_click: bool, 
             curve_to_edit: Option<usize>,
-            point_to_edit: usize, 
+            point_to_edit: usize,
+            point_for_moving: Option<Point>, 
             points: Vec<Point>, 
             poly_points: usize, 
             color: Color, 
@@ -607,8 +615,8 @@ impl Pending {
                             color, 
                             width } => {
 
-                    match curve_type.as_str() {
-                        "bezier" => {
+                    match curve_type {
+                        IpgCanvasWidget::Bezier => {
                             // if 2 points are set, use the cursor position for the control
                             if points.len() == count-1 {
                                 let path = Path::new(|p| {
@@ -634,7 +642,7 @@ impl Pending {
                                 );
                             }
                         },
-                        "circle" => {
+                        IpgCanvasWidget::Circle => {
                             // if only one point set, draw circle using cursor point
                             if points.len() == count-1 {
                                 let radius = points[0].distance(cursor_position);
@@ -647,7 +655,7 @@ impl Pending {
                                 );
                             }
                         },
-                        "line" => {
+                        IpgCanvasWidget::Line => {
                             // if only one point set, draw a line using the cursor
                             if points.len() == count-1 {
                                 let line = Path::line(points[0], cursor_position);
@@ -660,7 +668,7 @@ impl Pending {
                             }
                         },
                         // if all points set based on the poly_points, return the curve
-                        "polyline" => {
+                        IpgCanvasWidget::PolyLine => {
                             let path = Path::new(|p| {
                                 for index in 0..points.len() {
                                     if index > 0 {
@@ -679,7 +687,7 @@ impl Pending {
                                     .with_color(*color),
                             );
                         },
-                        "polygon" => {
+                        IpgCanvasWidget::Polygon => {
                             let n = poly_points.clone();
                             let angle = 0.0-PI/n as f32;
                             let center = points[0];
@@ -707,7 +715,7 @@ impl Pending {
                             );
                             
                         },
-                        "rectangle" => {
+                        IpgCanvasWidget::Rectangle => {
                             let rect_width = (cursor_position.x-points[0].x).abs();
                             let height = (cursor_position.y-points[0].y).abs();
                             
@@ -741,7 +749,7 @@ impl Pending {
                             )
                             
                         },
-                        "triangle" => {
+                        IpgCanvasWidget::Triangle => {
                             // if points are not set yet, just draw the lines.
                             let path = Path::new(|p| {
                                 for index in 0..points.len() {
@@ -761,16 +769,10 @@ impl Pending {
                                     .with_color(*color),
                             );
                         },
-                        "right_triangle" => {
+                        IpgCanvasWidget::RightTriangle => {
                             let mut pts = points.clone();
-                            if pts.len() > 1 {
-                                pts[1].x = pts[0].x;
-                            }
-                            if pts.len() > 2 {
-                                pts[2].y = pts[1].y;
-                            }
-                            
-                            // if points are not set yet, just draw the lines.
+                            // if points are not set yet, just draw the lines,
+                            // using the cursor as the next point.
                             let mut c_pos = cursor_position;
                             if pts.len() == 1 {
                                 c_pos.x = pts[0].x;
@@ -801,22 +803,32 @@ impl Pending {
                 Pending::Edit { 
                     curve_type,
                     first_click: _, 
-                    curve_to_edit,
-                    point_to_edit, 
+                    curve_to_edit: _,
+                    point_to_edit,
+                    point_for_moving, 
                     points, 
                     poly_points, 
                     color, 
                     width } => {
-                        match curve_type.as_str() {
-                            "bezier" => {
+                        match curve_type {
+                            IpgCanvasWidget::Bezier=> {
                                 let mut pts = points.clone();
-                                pts[*point_to_edit] = cursor_position;
+                                // Since the point to edit included the point_to_move
+                                // this needs to be skipped if some().
+                                if point_for_moving.is_none() {
+                                    pts[*point_to_edit] = cursor_position;
+                                }
                                 
                                 let path = Path::new(|p| {
-                                    p.move_to(pts[0]);
-                                    p.quadratic_curve_to(pts[2], pts[1]);
+                                if point_for_moving.is_some() {
+                                    pts = translate_geometry(pts, 
+                                                            cursor_position, 
+                                                            IpgCanvasWidget::Bezier);
+                                }
+                                p.move_to(pts[0]);
+                                p.quadratic_curve_to(pts[2], pts[1]);
                                 });
-                            
+                                
                                 frame.stroke(
                                     &path,
                                     Stroke::default()
@@ -824,37 +836,37 @@ impl Pending {
                                         .with_color(*color),
                                 );
                             },
-                            "circle" => {
+                            IpgCanvasWidget::Circle => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 let radius = pts[0].distance(pts[1]);
-                                let line = Path::circle(points[0], radius);
+                                let path = Path::circle(points[0], radius);
                                 frame.stroke(
-                                    &line,
+                                    &path,
                                     Stroke::default()
                                         .with_width(*width)
                                         .with_color(*color),
                                 );
                             },
-                            "line" => {
+                            IpgCanvasWidget::Line => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
-                                let line = Path::line(pts[0], pts[1]);
+                                let path = Path::line(pts[0], pts[1]);
                                 frame.stroke(
-                                    &line,
+                                    &path,
                                     Stroke::default()
                                         .with_width(*width)
                                         .with_color(*color),
                                 );
                             },
-                            "polyline" => {
+                            IpgCanvasWidget::PolyLine => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 let path = Path::new(|p| {
                                     for index in 0..pts.len() {
                                         if index > 0 {
-                                            p.move_to(points[index-1]);
-                                            p.line_to(points[index]);
+                                            p.move_to(pts[index-1]);
+                                            p.line_to(pts[index]);
                                         }
                                     }
                                 });
@@ -865,7 +877,7 @@ impl Pending {
                                         .with_color(*color),
                                 );
                             },
-                            "polygon" => {
+                            IpgCanvasWidget::Polygon => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 let n = poly_points.clone();
@@ -895,7 +907,7 @@ impl Pending {
                                 );
                                 
                             },
-                            "rectangle" => {
+                            IpgCanvasWidget::Rectangle => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 let rect_width = (pts[0].x-pts[1].x).abs();
@@ -917,21 +929,21 @@ impl Pending {
                                     None
                                 };
 
-                                let rect = if top_left.is_some() {
+                                let path = if top_left.is_some() {
                                         let size = Size{ width: rect_width, height };
                                     Path::rectangle(top_left.unwrap(), size)
                                     } else {
                                         Path::line(points[0], cursor_position)
                                     };
                                 frame.stroke(
-                                &rect,
+                                &path,
                                 Stroke::default()
                                     .with_width(*width)
                                     .with_color(*color),
                                 )
                                 
                             },
-                            "triangle" => {
+                            IpgCanvasWidget::Triangle => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 pts.push(pts[0]);
@@ -950,7 +962,7 @@ impl Pending {
                                         .with_color(*color),
                                 );
                             },
-                            "right_triangle" => {
+                            IpgCanvasWidget::RightTriangle => {
                                 let mut pts = points.clone();
                                 pts[*point_to_edit] = cursor_position;
                                 
@@ -1009,34 +1021,48 @@ fn find_closest_point_index(cursor: Point, points: &Vec<Point>) -> usize {
     closest_index
 }
 
-#[derive(Debug)]
-pub struct Counter {
-    pub counter: u64, 
+fn get_mid_point(pt1: Point, pt2: Point) -> Point {
+    Point {x: (pt1.x + pt2.x) / 2.0, y: (pt1.y + pt2.y) / 2.0 }
 }
 
-pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
-    counter: 0,
-});
+fn get_mid_geometry(pts: &Vec<Point>, curve_type: IpgCanvasWidget) -> Point {
 
-pub fn access_counter() -> MutexGuard<'static, Counter> {
-    COUNTER.lock().unwrap()
+    match curve_type {
+        IpgCanvasWidget::Bezier => {
+            // calculate the mid between first and second points 
+            // then the mid pt for the mid and control.
+            let mid = get_mid_point(pts[0], pts[1]);
+            get_mid_point(mid, pts[2])
+        },
+        IpgCanvasWidget::Circle | IpgCanvasWidget::Polygon=> {
+            // return the center point
+            pts[0]
+        },
+        IpgCanvasWidget::Line | IpgCanvasWidget::Rectangle => {
+            get_mid_point(pts[0], pts[1])
+        },
+        IpgCanvasWidget::PolyLine => {
+            let index = (pts.len() as i32 / 2) as i32 as usize;
+            let (pt1, pt2) = if pts.len() % 2 == 0 {
+                (pts[index-1], pts[index])
+            } else {
+                
+                let mid1 = get_mid_point(pts[index-1], pts[index]);
+                let mid2 = get_mid_point(pts[index], pts[index+1]);
+                (mid1, mid2)
+            };
+              
+            get_mid_point(pt1, pt2)
+        },
+        IpgCanvasWidget::RightTriangle | IpgCanvasWidget::Triangle=> {
+            let x = (pts[0].x + pts[1].x + pts[2].x)/3.0;
+            let y = (pts[0].y + pts[1].y + pts[2].y)/3.0;
+            Point {x, y}
+        },
+        IpgCanvasWidget::None => Point { x: 0.0, y: 0.0 },
+    }
+    
 }
-
-pub fn reset_counter() {
-    let mut cnt = access_counter();
-    cnt.counter = 0;
-    drop(cnt);
-}
-
-pub fn increment_counter() -> u64 {
-    let mut counter = 0;
-    let mut cnt = access_counter();
-    cnt.counter += 1;
-    counter = cnt.counter;
-    drop(cnt);
-    counter
-}
-
 
 #[test]
 fn test_find_closest_point_index() {
@@ -1065,3 +1091,47 @@ fn test_find_closest_point_index() {
     let closest = find_closest_point_index(cursor, &points);
     dbg!(closest);
 }
+
+fn translate_geometry(pts: Vec<Point>, 
+                        new_center: Point, 
+                        curve_type: IpgCanvasWidget) 
+                        -> Vec<Point> {
+    let old_center = get_mid_geometry(&pts, curve_type);
+    let mut new_pts = vec![];
+    let dist_x = new_center.x - old_center.x;
+    let dist_y = new_center.y - old_center.y;
+    for pt in pts.iter() {
+        new_pts.push(Point{x: pt.x + dist_x, y: pt.y + dist_y})
+    }
+
+    new_pts
+}
+
+
+// #[derive(Debug)]
+// pub struct Counter {
+//     pub counter: u64, 
+// }
+
+// pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
+//     counter: 0,
+// });
+
+// pub fn access_counter() -> MutexGuard<'static, Counter> {
+//     COUNTER.lock().unwrap()
+// }
+
+// pub fn reset_counter() {
+//     let mut cnt = access_counter();
+//     cnt.counter = 0;
+//     drop(cnt);
+// }
+
+// pub fn increment_counter() -> u64 {
+//     let mut counter = 0;
+//     let mut cnt = access_counter();
+//     cnt.counter += 1;
+//     counter = cnt.counter;
+//     drop(cnt);
+//     counter
+// }
