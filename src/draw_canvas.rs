@@ -154,6 +154,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     let mut pts = self.state.edit_draw_curve.points.clone();
                                     let mut mid_point = self.state.edit_draw_curve.mid_point.clone();
                                     let edit_mid_point: Option<Point> = Some(mid_point);
+                                    
                                     // either a point in the curve or the mid point will be assigned to
                                     // the cursor position
                                     let (edit_point_index, edit_mid_point) = 
@@ -171,6 +172,10 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             pts[2].y = pts[1].y;
                                         }
                                     }
+                                    // Since new points are generated using the cursor position,
+                                    // normally you would need to recalc the center position
+                                    // but since the point cuicle is not shown during movement,
+                                    // no need at this time.
                                     if edit_mid_point.is_some() {
                                         mid_point = edit_mid_point.unwrap();
                                     }
@@ -221,6 +226,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     let curve_type = self.state.edit_draw_curve.curve_type;
                                     pts = if edit_point_index.is_some() {
                                         pts[edit_point_index.clone().unwrap()] = cursor_position;
+                                        // recalculate mid_point
+                                        mid_point = get_mid_geometry(&pts, curve_type);
                                         pts
                                     }  else {
                                         mid_point = cursor_position;
@@ -932,12 +939,11 @@ impl Pending {
                                             cursor_position, 
                                             IpgCanvasWidget::Polygon);
                                 }
-
+                                
                                 let n = poly_points.clone();
                                 let angle = 0.0-PI/n as f32;
                                 let center = pts[0];
-                                let to = cursor_position;
-                                let radius = center.distance(to) as f32;
+                                let radius = center.distance(pts[1]) as f32;
                                 let mut points = vec![];
                                 let pi_2_n = 2.0*PI/n as f32;
                                 for i in 0..n {
@@ -945,8 +951,9 @@ impl Pending {
                                     let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
                                     points.push(Point { x: x as f32, y: y as f32 });
                                 }
-                                points.push(pts[0]);
-
+                                // close the polygon
+                                points.push(points[0]);
+                                
                                 let path = Path::new(|p| {
                                     p.move_to(points[0]);
                                     for point in points.iter() {
