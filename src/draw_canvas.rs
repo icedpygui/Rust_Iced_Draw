@@ -144,44 +144,13 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                     mouse::Event::ButtonPressed(mouse::Button::Left) => {
                         if self.state.edit_curve_index.is_some() {
                             
-                            // increment_counter_draw_pending_left_mouse();
-                            
                             match program_state {
                                 None => {
-                                    // The first click loads up the Curve
-                                    // since we're in edit mode, cursor position used.
-                                    let curve_type = self.state.edit_draw_curve.curve_type;
-                                    let mut pts = self.state.edit_draw_curve.points.clone();
-                                    let mut mid_point = self.state.edit_draw_curve.mid_point.clone();
-                                    let edit_mid_point: Option<Point> = Some(mid_point);
-                                    
-                                    // either a point in the curve or the mid point will be assigned to
-                                    // the cursor position
-                                    let (edit_point_index, edit_mid_point) = 
-                                        find_closest_point_index(cursor_position, 
-                                                                edit_mid_point.unwrap(), 
-                                                                &pts,
-                                                                curve_type,);
-                                    
-                                    // ensures the right triangle stays aligned
-                                    if curve_type == IpgCanvasWidget::RightTriangle {
-                                        if pts.len() > 1 {
-                                        pts[1].x = pts[0].x;
-                                        }
-                                        if pts.len() > 2 {
-                                            pts[2].y = pts[1].y;
-                                        }
-                                    }
-                                    // Since new points are generated using the cursor position,
-                                    // normally you would need to recalc the center position
-                                    // but since the point cuicle is not shown during movement,
-                                    // no need at this time.
-                                    if edit_mid_point.is_some() {
-                                        mid_point = edit_mid_point.unwrap();
-                                    }
+                                    let (pts, mid_point, edit_point_index, edit_mid_point) = 
+                                        edit_curve_first_click(self.state, cursor_position);
 
                                     *program_state = Some(Pending::Edit {
-                                        curve_type,
+                                        curve_type: self.state.edit_draw_curve.curve_type,
                                         first_click: true,
                                         edit_curve_index: self.state.edit_curve_index,
                                         edit_point_index,
@@ -194,7 +163,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     });
                                     
                                     Some(DrawCurve {
-                                        curve_type,
+                                        curve_type: self.state.edit_draw_curve.curve_type,
                                         points: pts,
                                         poly_points: self.state.edit_draw_curve.poly_points,
                                         mid_point,
@@ -217,46 +186,52 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         color,
                                         width,
                                 }) => {
-                                    // we clone here because if we don't the state cannot be 
-                                    // set to none because it would be borrowed if we use it.
-                                    let mut pts = points.clone();
-                                    let mut mid_point = mid_point.clone();
-                                    // Since points_to_move was found using closest point,
-                                    // point_to_edit pointed to it therefore skip when some()
-                                    let curve_type = self.state.edit_draw_curve.curve_type;
-                                    pts = if edit_point_index.is_some() {
-                                        pts[edit_point_index.clone().unwrap()] = cursor_position;
-                                        // recalculate mid_point
-                                        mid_point = get_mid_geometry(&pts, curve_type);
-                                        pts
-                                    }  else {
-                                        mid_point = cursor_position;
-                                        translate_geometry(pts, cursor_position, curve_type.clone())
-                                    };
+                                    let (pts, mid_point) = 
+                                        edit_curve_second_click(&self.state, 
+                                                                cursor_position,
+                                                                points.to_vec(), 
+                                                                edit_point_index.clone(),
+                                                                );
+                                    // // we clone here because if we don't the state cannot be 
+                                    // // set to none because it would be borrowed if we use it.
+                                    // let mut pts = points.clone();
+                                    // let mut mid_point = mid_point.clone();
+                                    // // Since points_to_move was found using closest point,
+                                    // // point_to_edit pointed to it therefore skip when some()
+                                    // let curve_type = self.state.edit_draw_curve.curve_type;
+                                    // pts = if edit_point_index.is_some() {
+                                    //     pts[edit_point_index.clone().unwrap()] = cursor_position;
+                                    //     // recalculate mid_point
+                                    //     mid_point = get_mid_geometry(&pts, curve_type);
+                                    //     pts
+                                    // }  else {
+                                    //     mid_point = cursor_position;
+                                    //     translate_geometry(pts, cursor_position, curve_type.clone())
+                                    // };
                                     
-                                    let color = color.clone();
-                                    let width = width.clone();
-                                    let poly_points = poly_points.clone();
+                                    // let color = color.clone();
+                                    // let width = width.clone();
+                                    // let poly_points = poly_points.clone();
 
-                                    if curve_type == IpgCanvasWidget::RightTriangle {
-                                        if pts.len() > 1 {
-                                        pts[1].x = pts[0].x;
-                                        }
-                                        if pts.len() > 2 {
-                                            pts[2].y = pts[1].y;
-                                        }
-                                    }
+                                    // if curve_type == IpgCanvasWidget::RightTriangle {
+                                    //     if pts.len() > 1 {
+                                    //     pts[1].x = pts[0].x;
+                                    //     }
+                                    //     if pts.len() > 2 {
+                                    //         pts[2].y = pts[1].y;
+                                    //     }
+                                    // }
                                     // second click ends the editing and returns to the 
                                     // main update() AddCurve 
                                     *program_state = None;
                                     Some(DrawCurve {
-                                        curve_type,
+                                        curve_type: self.state.edit_draw_curve.curve_type,
                                         points: pts,
-                                        poly_points,
+                                        poly_points: *poly_points,
                                         mid_point,
                                         first_click: false,
-                                        color,
-                                        width,
+                                        color: *color,
+                                        width: *width,
                                     })
                                 },
                                 _ => None,
@@ -340,7 +315,12 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 _ => None,
                             }
                         }
-                    }
+                    },
+                    // mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                    //     if self.state.edit_curve_index.is_some() {
+                    //         *program_state = rotate_geometry()
+                    //     }
+                    // },
                     _ => None,
                 };
 
@@ -389,6 +369,76 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
             mouse::Interaction::default()
         }
     }
+}
+
+
+fn edit_curve_first_click(state: &State, cursor_position: Point) 
+    -> (Vec<Point>, Point, Option<usize>, Option<Point>) {
+    // The first click loads up the Curve
+    // since we're in edit mode, cursor position used.
+    let curve_type = state.edit_draw_curve.curve_type;
+    let mut pts = state.edit_draw_curve.points.clone();
+    let mut mid_point = state.edit_draw_curve.mid_point.clone();
+    let edit_mid_point: Option<Point> = Some(mid_point);
+    
+    // either a point in the curve or the mid point will be assigned to
+    // the cursor position
+    let (edit_point_index, edit_mid_point) = 
+        find_closest_point_index(cursor_position, 
+                                edit_mid_point.unwrap(), 
+                                &pts,
+                                curve_type,);
+    
+    // ensures the right triangle stays aligned
+    if curve_type == IpgCanvasWidget::RightTriangle {
+        if pts.len() > 1 {
+        pts[1].x = pts[0].x;
+        }
+        if pts.len() > 2 {
+            pts[2].y = pts[1].y;
+        }
+    }
+    // Since new points are generated using the cursor position,
+    // normally you would need to recalc the center position
+    // but since the point cuicle is not shown during movement,
+    // no need at this time.
+    if edit_mid_point.is_some() {
+        mid_point = edit_mid_point.unwrap();
+    }
+    (pts, mid_point, edit_point_index, edit_mid_point)
+
+}
+
+fn edit_curve_second_click(state: &State,
+                            cursor_position: Point,
+                            mut points: Vec<Point>, 
+                            edit_point_index: Option<usize>,
+                            ) -> (Vec<Point>, Point) {
+    
+    // Since points_to_move was found using closest point,
+    // point_to_edit pointed to it therefore skip when some()
+    let curve_type = state.edit_draw_curve.curve_type;
+    let mut mid_point = Point::default();
+    points = if edit_point_index.is_some() {
+        points[edit_point_index.clone().unwrap()] = cursor_position;
+        // recalculate mid_point
+        mid_point = get_mid_geometry(&points, curve_type);
+        points
+    }  else {
+        mid_point = cursor_position;
+        translate_geometry(points, cursor_position, curve_type)
+    };
+    
+    if curve_type == IpgCanvasWidget::RightTriangle {
+        if points.len() > 1 {
+        points[1].x = points[0].x;
+        }
+        if points.len() > 2 {
+            points[2].y = points[1].y;
+        }
+    }
+    (points, mid_point)
+
 }
 
 #[derive(Debug, Clone, Default)]
@@ -596,6 +646,9 @@ impl DrawCurve {
 
     }
 }
+
+
+
 
 #[derive(Debug, Clone)]
 enum Pending {
@@ -1189,7 +1242,6 @@ fn translate_geometry(pts: Vec<Point>,
 
     new_pts
 }
-
 
 #[derive(Debug)]
 pub struct Counter {
