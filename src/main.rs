@@ -53,10 +53,10 @@ impl Example {
                     self.curves[self.state.edit_curve_index.unwrap()] = curve.clone();
                     // update the mid point, in case of a change
                     self.state.edit_draw_curve.mid_point = curve.mid_point.clone();
+                    self.state.rotation = curve.rotation;
                     self.state.edit_draw_curve = curve;
                 } else {
                     self.curves.push(curve);
-                    
                 }
                 
                 self.state.request_redraw();
@@ -454,7 +454,8 @@ fn convert_to_draw_curve_type(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
                                     points: dc_points, 
                                     poly_points: curve.poly_points,
                                     mid_point: Point::default(),
-                                    first_click: false, 
+                                    first_click: false,
+                                    rotation: false, 
                                     color, 
                                     width: curve.width, 
                                     });

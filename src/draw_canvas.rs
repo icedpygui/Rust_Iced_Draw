@@ -1,6 +1,6 @@
 
 use std::f32::consts::PI;
-use std::sync::{Mutex, MutexGuard};
+// use std::sync::{Mutex, MutexGuard};
 
 use iced::{mouse, Color, Size};
 use iced::widget::canvas::event::{self, Event};
@@ -56,6 +56,7 @@ pub struct State {
     pub draw_width: f32,
     pub edit_draw_curve: DrawCurve,
     pub edit_curve_index: Option<usize>,
+    pub rotation: bool,
     pub escape_pressed: bool,
     pub poly_points: usize,
     pub curve_type: IpgCanvasWidget,
@@ -69,9 +70,10 @@ impl Default for State {
         Self { 
                 cache: canvas::Cache::default(),
                 canvas_mode: CanvasMode::None,
-                edit_curve_index: None,
                 draw_width: 2.0,
+                edit_curve_index: None,
                 edit_draw_curve: DrawCurve::default(),
+                rotation: false,
                 escape_pressed: false,
                 poly_points: 5,
                 curve_type: IpgCanvasWidget::None,
@@ -143,11 +145,13 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                 let message = match mouse_event {
                     mouse::Event::ButtonPressed(mouse::Button::Left) => {
                         if self.state.edit_curve_index.is_some() {
-                            
                             match program_state {
                                 None => {
-                                    let (pts, mid_point, edit_point_index, edit_mid_point) = 
-                                        edit_curve_first_click(self.state, cursor_position);
+                                    let (pts, 
+                                        mid_point, 
+                                        edit_point_index, 
+                                        edit_mid_point) = 
+                                            edit_curve_first_click(self.state, cursor_position);
 
                                     *program_state = Some(Pending::Edit {
                                         curve_type: self.state.edit_draw_curve.curve_type,
@@ -168,6 +172,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         poly_points: self.state.edit_draw_curve.poly_points,
                                         mid_point,
                                         first_click: true,
+                                        rotation: false,
                                         color: self.state.edit_draw_curve.color,
                                         width: self.state.edit_draw_curve.width,
                                     })
@@ -182,56 +187,31 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         edit_mid_point: _,
                                         points,
                                         poly_points,
-                                        mid_point,
+                                        mid_point: _,
                                         color,
                                         width,
                                 }) => {
                                     let (pts, mid_point) = 
                                         edit_curve_second_click(&self.state, 
                                                                 cursor_position,
-                                                                points.to_vec(), 
+                                                                points.clone(), 
                                                                 edit_point_index.clone(),
                                                                 );
-                                    // // we clone here because if we don't the state cannot be 
-                                    // // set to none because it would be borrowed if we use it.
-                                    // let mut pts = points.clone();
-                                    // let mut mid_point = mid_point.clone();
-                                    // // Since points_to_move was found using closest point,
-                                    // // point_to_edit pointed to it therefore skip when some()
-                                    // let curve_type = self.state.edit_draw_curve.curve_type;
-                                    // pts = if edit_point_index.is_some() {
-                                    //     pts[edit_point_index.clone().unwrap()] = cursor_position;
-                                    //     // recalculate mid_point
-                                    //     mid_point = get_mid_geometry(&pts, curve_type);
-                                    //     pts
-                                    // }  else {
-                                    //     mid_point = cursor_position;
-                                    //     translate_geometry(pts, cursor_position, curve_type.clone())
-                                    // };
-                                    
-                                    // let color = color.clone();
-                                    // let width = width.clone();
-                                    // let poly_points = poly_points.clone();
 
-                                    // if curve_type == IpgCanvasWidget::RightTriangle {
-                                    //     if pts.len() > 1 {
-                                    //     pts[1].x = pts[0].x;
-                                    //     }
-                                    //     if pts.len() > 2 {
-                                    //         pts[2].y = pts[1].y;
-                                    //     }
-                                    // }
-                                    // second click ends the editing and returns to the 
-                                    // main update() AddCurve 
+                                    // Need to clone otherwise Program_state borrowed
+                                    let poly_points = poly_points.clone();
+                                    let color = color.clone();
+                                    let width = width.clone();
                                     *program_state = None;
                                     Some(DrawCurve {
                                         curve_type: self.state.edit_draw_curve.curve_type,
                                         points: pts,
-                                        poly_points: *poly_points,
+                                        poly_points,
                                         mid_point,
                                         first_click: false,
-                                        color: *color,
-                                        width: *width,
+                                        rotation: false,
+                                        color,
+                                        width,
                                     })
                                 },
                                 _ => None,
@@ -297,6 +277,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             poly_points,
                                             mid_point: Point::default(),
                                             first_click: false,
+                                            rotation: false,
                                             color,
                                             width,
                                         })
@@ -316,11 +297,65 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             }
                         }
                     },
-                    // mouse::Event::ButtonPressed(mouse::Button::Right) => {
-                    //     if self.state.edit_curve_index.is_some() {
-                    //         *program_state = rotate_geometry()
-                    //     }
-                    // },
+                    mouse::Event::ButtonPressed(mouse::Button::Right) => {
+                        if self.state.edit_curve_index.is_none() {
+                            *program_state = None;
+                            return (event::Status::Ignored, None)
+                        }
+
+                        match program_state {
+                            // First mouse click sets the state of the first Pending point
+                            // return a none since no Curve yet
+                            None => {
+                                *program_state = Some(Pending::Rotation { 
+                                    points: self.state.edit_draw_curve.points.clone(), 
+                                    scroll_count: 0.0,
+                                    first_click: true,
+                                });
+                                Some(DrawCurve {
+                                    curve_type: self.state.edit_draw_curve.curve_type,
+                                    points: self.state.edit_draw_curve.points.clone(),
+                                    poly_points: self.state.edit_draw_curve.poly_points,
+                                    mid_point: Point::default(),
+                                    first_click: true,
+                                    rotation: true,
+                                    color: self.state.edit_draw_curve.color,
+                                    width: self.state.edit_draw_curve.width,
+                                })
+                            },
+                            // The second click is a Some() since it was created above
+                            // The pending is carrying the previous info
+                            Some(Pending::Rotation { 
+                                points, 
+                                scroll_count: _,
+                                first_click: false,
+                            }) => {
+                                // after pushing on the point, we check to see if the count matches
+                                // if so then we return the Curve and set the state to none
+                                // if not, then this is repeated until the count is equaled.
+                                let points = points.clone();
+                                *program_state = None;
+                                Some(DrawCurve {
+                                    curve_type: self.state.curve_type,
+                                    points,
+                                    poly_points: self.state.poly_points,
+                                    mid_point: Point::default(),
+                                    first_click: false,
+                                    rotation: false,
+                                    color: self.state.selected_color,
+                                    width: self.state.draw_width,
+                                })
+                            },
+                            _ => None,
+                        }
+                    },
+                    mouse::Event::WheelScrolled { delta } => {
+                        if self.state.rotation {
+                            dbg!(delta);
+                        }
+                        *program_state = None;
+                        return (event::Status::Ignored, None)
+                    }
                     _ => None,
                 };
 
@@ -418,26 +453,27 @@ fn edit_curve_second_click(state: &State,
     // Since points_to_move was found using closest point,
     // point_to_edit pointed to it therefore skip when some()
     let curve_type = state.edit_draw_curve.curve_type;
-    let mut mid_point = Point::default();
-    points = if edit_point_index.is_some() {
+
+    let (mut pts, mid_point) = if edit_point_index.is_some() {
         points[edit_point_index.clone().unwrap()] = cursor_position;
         // recalculate mid_point
-        mid_point = get_mid_geometry(&points, curve_type);
-        points
+        let mid_point = get_mid_geometry(&points, curve_type);
+        (points, mid_point)
     }  else {
-        mid_point = cursor_position;
-        translate_geometry(points, cursor_position, curve_type)
+        let mid_point = cursor_position;
+        (translate_geometry(points, cursor_position, curve_type),
+        mid_point)
     };
     
     if curve_type == IpgCanvasWidget::RightTriangle {
-        if points.len() > 1 {
-        points[1].x = points[0].x;
+        if pts.len() > 1 {
+        pts[1].x = pts[0].x;
         }
-        if points.len() > 2 {
-            points[2].y = points[1].y;
+        if pts.len() > 2 {
+            pts[2].y = pts[1].y;
         }
     }
-    (points, mid_point)
+    (pts, mid_point)
 
 }
 
@@ -448,6 +484,7 @@ pub struct DrawCurve {
     pub poly_points: usize,
     pub mid_point: Point,
     pub first_click: bool,
+    pub rotation: bool,
     pub color: Color,
     pub width: f32,
 }
@@ -649,26 +686,34 @@ impl DrawCurve {
 
 
 
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum Pending {
-    N {curve_type: IpgCanvasWidget, 
+    N {
+        curve_type: IpgCanvasWidget, 
         count: usize, 
         points: Vec<Point>, 
         poly_points: usize, 
         color: Color, 
-        width: f32},
-
-    Edit {curve_type: IpgCanvasWidget, 
-            first_click: bool, 
-            edit_curve_index: Option<usize>,
-            edit_point_index: Option<usize>,
-            edit_mid_point: Option<Point>,
-            mid_point: Point, 
-            points: Vec<Point>, 
-            poly_points: usize, 
-            color: Color, 
-            width: f32 },
+        width: f32
+    },
+    Edit {
+        curve_type: IpgCanvasWidget, 
+        first_click: bool, 
+        edit_curve_index: Option<usize>,
+        edit_point_index: Option<usize>,
+        edit_mid_point: Option<Point>,
+        mid_point: Point, 
+        points: Vec<Point>, 
+        poly_points: usize, 
+        color: Color, 
+        width: f32 
+        },
+    Rotation {
+        points: Vec<Point>,
+        scroll_count: f32,
+        first_click: bool,
+    }
 }
 
 impl Pending {
@@ -919,7 +964,6 @@ impl Pending {
                                     pts[edit_point_index.unwrap()] = cursor_position;
                                 }
                                 if edit_mid_point.is_some() {
-                                    dbg!("here");
                                     pts = translate_geometry(pts, 
                                             cursor_position, 
                                             IpgCanvasWidget::Circle);
@@ -1130,6 +1174,9 @@ impl Pending {
                             _ => (),
                         }
                     }
+                Pending::Rotation { points, scroll_count, first_click: _ } => {
+                    let _new_points = rotate_geometry(points, scroll_count);
+                },
             };
         }
 
@@ -1243,38 +1290,52 @@ fn translate_geometry(pts: Vec<Point>,
     new_pts
 }
 
-#[derive(Debug)]
-pub struct Counter {
-    pub counter_draw_curve: u64,
-    pub counter_draw_pending_left_mouse: u64,
+fn rotate_geometry(points: &Vec<Point>, theta: &f32) -> Vec<Point> {
+
+    let mut new_points = vec![];
+    for point in points.iter() {
+        let x_new = point.x * theta.cos() - point.y * theta.sin();
+        let y_new = point.x * theta.sin() + point.y * theta.cos();
+
+        new_points.push(Point { x: x_new, y: y_new })
+    }
+    
+    new_points
+     
 }
 
-pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
-    counter_draw_curve: 0,
-    counter_draw_pending_left_mouse: 0,
-});
+// #[derive(Debug)]
+// pub struct Counter {
+//     pub counter_draw_curve: u64,
+//     pub counter_draw_pending_left_mouse: u64,
+// }
 
-pub fn access_counter() -> MutexGuard<'static, Counter> {
-    COUNTER.lock().unwrap()
-}
+// pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
+//     counter_draw_curve: 0,
+//     counter_draw_pending_left_mouse: 0,
+// });
 
-pub fn reset_counter() {
-    let mut cnt = access_counter();
-    cnt.counter_draw_curve = 0;
-    drop(cnt);
-}
+// pub fn access_counter() -> MutexGuard<'static, Counter> {
+//     COUNTER.lock().unwrap()
+// }
 
-pub fn increment_draw_curve_counter() {
-    let mut cnt = access_counter();
-    cnt.counter_draw_curve += 1;
-    println!("DrawCurve_draw_all() - {}", cnt.counter_draw_curve);
-    drop(cnt);
+// pub fn reset_counter() {
+//     let mut cnt = access_counter();
+//     cnt.counter_draw_curve = 0;
+//     drop(cnt);
+// }
 
-}
+// pub fn increment_draw_curve_counter() {
+//     let mut cnt = access_counter();
+//     cnt.counter_draw_curve += 1;
+//     println!("DrawCurve_draw_all() - {}", cnt.counter_draw_curve);
+//     drop(cnt);
 
-pub fn increment_counter_draw_pending_left_mouse() {
-    let mut cnt = access_counter();
-    cnt.counter_draw_pending_left_mouse += 1;
-    println!("DrawPending-> update()-> mouse left- {}", cnt.counter_draw_pending_left_mouse);
-    drop(cnt);
-}
+// }
+
+// pub fn increment_counter_draw_pending_left_mouse() {
+//     let mut cnt = access_counter();
+//     cnt.counter_draw_pending_left_mouse += 1;
+//     println!("DrawPending-> update()-> mouse left- {}", cnt.counter_draw_pending_left_mouse);
+//     drop(cnt);
+// }
