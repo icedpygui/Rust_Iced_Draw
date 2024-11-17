@@ -302,15 +302,19 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             *program_state = None;
                             return (event::Status::Ignored, None)
                         }
-
                         match program_state {
                             // First mouse click sets the state of the first Pending point
                             // return a none since no Curve yet
                             None => {
                                 *program_state = Some(Pending::Rotation { 
-                                    points: self.state.edit_draw_curve.points.clone(), 
+                                    curve_type: self.state.edit_draw_curve.curve_type,
+                                    points: self.state.edit_draw_curve.points.clone(),
+                                    poly_points: self.state.edit_draw_curve.poly_points,
+                                    mid_point: self.state.edit_draw_curve.mid_point,
                                     scroll_count: 0.0,
                                     first_click: true,
+                                    color: self.state.edit_draw_curve.color, 
+                                    width: self.state.edit_draw_curve.width,
                                 });
                                 Some(DrawCurve {
                                     curve_type: self.state.edit_draw_curve.curve_type,
@@ -325,36 +329,82 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             },
                             // The second click is a Some() since it was created above
                             // The pending is carrying the previous info
-                            Some(Pending::Rotation { 
-                                points, 
+                            Some(Pending::Rotation {
+                                curve_type,
+                                points,
+                                poly_points,
+                                mid_point,
                                 scroll_count: _,
                                 first_click: false,
+                                color,
+                                width,
                             }) => {
                                 // after pushing on the point, we check to see if the count matches
                                 // if so then we return the Curve and set the state to none
                                 // if not, then this is repeated until the count is equaled.
                                 let points = points.clone();
+                                let curve_type = curve_type.clone();
+                                let poly_points = poly_points.clone();
+                                let mid_point = mid_point.clone();
+                                let color = color.clone();
+                                let width = width.clone();
                                 *program_state = None;
                                 Some(DrawCurve {
-                                    curve_type: self.state.curve_type,
+                                    curve_type,
                                     points,
-                                    poly_points: self.state.poly_points,
-                                    mid_point: Point::default(),
+                                    poly_points,
+                                    mid_point,
                                     first_click: false,
                                     rotation: false,
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
+                                    color,
+                                    width,
                                 })
                             },
                             _ => None,
                         }
                     },
                     mouse::Event::WheelScrolled { delta } => {
-                        if self.state.rotation {
-                            dbg!(delta);
+                        let scroll_direction = match delta {
+                            mouse::ScrollDelta::Lines { x: _, y } => {
+                                y
+                            },
+                            mouse::ScrollDelta::Pixels { x: _, y } => {
+                                y
+                            },
+                        };
+                        if !self.state.rotation {
+                            *program_state = None;
+                            return (event::Status::Ignored, None)
                         }
-                        *program_state = None;
-                        return (event::Status::Ignored, None)
+                        match program_state {
+                            Some(Pending::Rotation {
+                                curve_type,
+                                points,
+                                poly_points,
+                                mid_point,
+                                scroll_count,
+                                first_click: _,
+                                color,
+                                width,
+                            }) => {
+                                
+                                let scroll_count = scroll_count.clone() + 0.01 * scroll_direction;
+                                let points = rotate_geometry(points, *mid_point, &scroll_count);
+                                dbg!(&scroll_count);
+                                *program_state = Some(Pending::Rotation {
+                                    curve_type: *curve_type,
+                                    points,
+                                    poly_points: *poly_points,
+                                    mid_point: *mid_point, 
+                                    scroll_count, 
+                                    first_click: false,
+                                    color: *color,
+                                    width: *width,
+                                });
+                                None
+                            }
+                            _ => None,
+                        }
                     }
                     _ => None,
                 };
@@ -575,7 +625,7 @@ enum Pending {
         points: Vec<Point>, 
         poly_points: usize, 
         color: Color, 
-        width: f32
+        width: f32,
     },
     Edit {
         curve_type: IpgCanvasWidget, 
@@ -587,12 +637,17 @@ enum Pending {
         points: Vec<Point>, 
         poly_points: usize, 
         color: Color, 
-        width: f32 
+        width: f32,
         },
     Rotation {
+        curve_type: IpgCanvasWidget,
         points: Vec<Point>,
+        poly_points: usize,
+        mid_point: Point,
         scroll_count: f32,
         first_click: bool,
+        color: Color, 
+        width: f32,
     }
 }
 
@@ -943,8 +998,51 @@ impl Pending {
                             _ => (),
                         }
                     }
-                Pending::Rotation { points, scroll_count, first_click: _ } => {
-                    let _new_points = rotate_geometry(points, scroll_count);
+                Pending::Rotation {
+                    curve_type,
+                    points,
+                    poly_points,
+                    mid_point: _,
+                    scroll_count: _, 
+                    first_click: _,
+                    color,
+                    width,
+                } => {
+                    let path = match curve_type {
+                        IpgCanvasWidget::None => {
+                            Path::new(|_p| {})
+                        },
+                        IpgCanvasWidget::Bezier => {
+                            build_bezier_path(&points)
+                        },
+                        IpgCanvasWidget::Circle => {
+                            build_circle_path(&points)
+                        },
+                        IpgCanvasWidget::Line => {
+                            build_polyline_path(&points)
+                        },
+                        IpgCanvasWidget::PolyLine => {
+                            build_polyline_path(&points)
+                        },
+                        IpgCanvasWidget::Polygon => {
+                            build_polygon_path(&points, *poly_points)
+                        },
+                        IpgCanvasWidget::Rectangle => {
+                            build_rectangle_path(&points)
+                        },
+                        IpgCanvasWidget::RightTriangle => {
+                            build_triangle_path(&points)
+                        },
+                        IpgCanvasWidget::Triangle => {
+                            build_triangle_path(&points)
+                        },
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(*width)
+                            .with_color(*color),
+                    );
                 },
             };
         }
@@ -1059,12 +1157,18 @@ fn translate_geometry(pts: Vec<Point>,
     new_pts
 }
 
-fn rotate_geometry(points: &Vec<Point>, theta: &f32) -> Vec<Point> {
+// To rotate a point (x, y) around a center point (cx, cy) by an angle θ, 
+// the formula for the rotated coordinates (x', y') is: 
+// x' = (x - cx) * cos(θ) - (y - cy) * sin(θ) + cx and 
+// y' = (x - cx) * sin(θ) + (y - cy) * cos(θ) + cy; 
+// where (x, y) is the original point, (cx, cy) is the center of rotation, 
+//and θ is the rotation angle in radians. 
+fn rotate_geometry(points: &Vec<Point>, center: Point, theta: &f32) -> Vec<Point> {
 
     let mut new_points = vec![];
     for point in points.iter() {
-        let x_new = point.x * theta.cos() - point.y * theta.sin();
-        let y_new = point.x * theta.sin() + point.y * theta.cos();
+        let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
+        let y_new = (point.x - center.x) * theta.sin() + (point.y - center.y) * theta.cos() + center.y;
 
         new_points.push(Point { x: x_new, y: y_new })
     }
