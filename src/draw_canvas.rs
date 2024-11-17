@@ -311,7 +311,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     points: self.state.edit_draw_curve.points.clone(),
                                     poly_points: self.state.edit_draw_curve.poly_points,
                                     mid_point: self.state.edit_draw_curve.mid_point,
-                                    scroll_count: 0.0,
+                                    step: 0.0,
                                     first_click: true,
                                     color: self.state.edit_draw_curve.color, 
                                     width: self.state.edit_draw_curve.width,
@@ -334,7 +334,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 points,
                                 poly_points,
                                 mid_point,
-                                scroll_count: _,
+                                step: _,
                                 first_click: false,
                                 color,
                                 width,
@@ -382,21 +382,24 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 points,
                                 poly_points,
                                 mid_point,
-                                scroll_count,
+                                step: _,
                                 first_click: _,
                                 color,
                                 width,
                             }) => {
                                 
-                                let scroll_count = scroll_count.clone() + 0.01 * scroll_direction;
-                                let points = rotate_geometry(points, *mid_point, &scroll_count);
-                                dbg!(&scroll_count);
+                                let step = PI/10.0;
+                                
+                                let angle = step * scroll_direction;
+                                
+                                let points = rotate_geometry(points, *mid_point, &angle);
+
                                 *program_state = Some(Pending::Rotation {
                                     curve_type: *curve_type,
                                     points,
                                     poly_points: *poly_points,
                                     mid_point: *mid_point, 
-                                    scroll_count, 
+                                    step, 
                                     first_click: false,
                                     color: *color,
                                     width: *width,
@@ -644,7 +647,7 @@ enum Pending {
         points: Vec<Point>,
         poly_points: usize,
         mid_point: Point,
-        scroll_count: f32,
+        step: f32,
         first_click: bool,
         color: Color, 
         width: f32,
@@ -1003,7 +1006,7 @@ impl Pending {
                     points,
                     poly_points,
                     mid_point: _,
-                    scroll_count: _, 
+                    step: _, 
                     first_click: _,
                     color,
                     width,
