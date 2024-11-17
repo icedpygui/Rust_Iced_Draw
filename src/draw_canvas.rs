@@ -173,6 +173,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         mid_point,
                                         first_click: true,
                                         rotation: false,
+                                        angle: 0.0,
                                         color: self.state.edit_draw_curve.color,
                                         width: self.state.edit_draw_curve.width,
                                     })
@@ -210,6 +211,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         mid_point,
                                         first_click: false,
                                         rotation: false,
+                                        angle: 0.0,
                                         color,
                                         width,
                                     })
@@ -278,6 +280,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             mid_point: Point::default(),
                                             first_click: false,
                                             rotation: false,
+                                            angle: 0.0,
                                             color,
                                             width,
                                         })
@@ -302,6 +305,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             *program_state = None;
                             return (event::Status::Ignored, None)
                         }
+
                         match program_state {
                             // First mouse click sets the state of the first Pending point
                             // return a none since no Curve yet
@@ -312,6 +316,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     poly_points: self.state.edit_draw_curve.poly_points,
                                     mid_point: self.state.edit_draw_curve.mid_point,
                                     step: 0.0,
+                                    step_count: 0,
+                                    angle: self.state.edit_draw_curve.angle,
                                     first_click: true,
                                     color: self.state.edit_draw_curve.color, 
                                     width: self.state.edit_draw_curve.width,
@@ -323,6 +329,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     mid_point: Point::default(),
                                     first_click: true,
                                     rotation: true,
+                                    angle: self.state.edit_draw_curve.angle,
                                     color: self.state.edit_draw_curve.color,
                                     width: self.state.edit_draw_curve.width,
                                 })
@@ -335,20 +342,23 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 poly_points,
                                 mid_point,
                                 step: _,
+                                step_count: _,
+                                angle,
                                 first_click: false,
                                 color,
                                 width,
                             }) => {
-                                // after pushing on the point, we check to see if the count matches
-                                // if so then we return the Curve and set the state to none
-                                // if not, then this is repeated until the count is equaled.
+                                // update draw curve
                                 let points = points.clone();
                                 let curve_type = curve_type.clone();
                                 let poly_points = poly_points.clone();
                                 let mid_point = mid_point.clone();
+                                let angle = angle.clone();
                                 let color = color.clone();
                                 let width = width.clone();
+
                                 *program_state = None;
+
                                 Some(DrawCurve {
                                     curve_type,
                                     points,
@@ -356,6 +366,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     mid_point,
                                     first_click: false,
                                     rotation: false,
+                                    angle,
                                     color,
                                     width,
                                 })
@@ -383,6 +394,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 poly_points,
                                 mid_point,
                                 step: _,
+                                step_count,
+                                angle: _,
                                 first_click: _,
                                 color,
                                 width,
@@ -390,16 +403,29 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 
                                 let step = PI/10.0;
                                 
-                                let angle = step * scroll_direction;
+                                let step_angle = step * scroll_direction;
+
+                                let mut step_count = *step_count + scroll_direction as i32;
+
+                                if step_count > 19 {
+                                    step_count = 0;
+                                }
+                                if step_count < 0 {
+                                    step_count = 19;
+                                }
+
+                                let angle = step_count as f32/10.0 * step_angle;
                                 
-                                let points = rotate_geometry(points, *mid_point, &angle);
+                                let points = rotate_geometry(points, *mid_point, &step_angle);
 
                                 *program_state = Some(Pending::Rotation {
                                     curve_type: *curve_type,
                                     points,
                                     poly_points: *poly_points,
                                     mid_point: *mid_point, 
-                                    step, 
+                                    step,
+                                    step_count,
+                                    angle, 
                                     first_click: false,
                                     color: *color,
                                     width: *width,
@@ -538,6 +564,7 @@ pub struct DrawCurve {
     pub mid_point: Point,
     pub first_click: bool,
     pub rotation: bool,
+    pub angle: f32,
     pub color: Color,
     pub width: f32,
 }
@@ -592,7 +619,7 @@ impl DrawCurve {
                         build_polyline_path(&curve.points)
                     },
                     IpgCanvasWidget::Polygon => {
-                        build_polygon_path(&curve.points, curve.poly_points)
+                        build_polygon_path(&curve.points, curve.poly_points, 0.0)
                     }
                     IpgCanvasWidget::Rectangle => {
                         build_rectangle_path(&curve.points)
@@ -648,6 +675,8 @@ enum Pending {
         poly_points: usize,
         mid_point: Point,
         step: f32,
+        step_count: i32,
+        angle: f32,
         first_click: bool,
         color: Color, 
         width: f32,
@@ -750,7 +779,7 @@ impl Pending {
                         IpgCanvasWidget::Polygon => {
                             let mut points = points.clone();
                             points.push(cursor_position);
-                            let path = build_polygon_path(&points, poly_points.clone());
+                            let path = build_polygon_path(&points, poly_points.clone(), 0.0);
                             
                             frame.stroke(
                                 &path,
@@ -919,7 +948,7 @@ impl Pending {
                                             IpgCanvasWidget::Polygon);
                                 }
                                 
-                                let path = build_polygon_path(&pts, poly_points.clone());
+                                let path = build_polygon_path(&pts, poly_points.clone(), 0.0);
                                 
                                 frame.stroke(
                                     &path,
@@ -1006,7 +1035,9 @@ impl Pending {
                     points,
                     poly_points,
                     mid_point: _,
-                    step: _, 
+                    step: _,
+                    step_count: _,
+                    angle, 
                     first_click: _,
                     color,
                     width,
@@ -1028,7 +1059,7 @@ impl Pending {
                             build_polyline_path(&points)
                         },
                         IpgCanvasWidget::Polygon => {
-                            build_polygon_path(&points, *poly_points)
+                            build_polygon_path(&points, *poly_points, *angle)
                         },
                         IpgCanvasWidget::Rectangle => {
                             build_rectangle_path(&points)
@@ -1205,9 +1236,9 @@ fn build_polyline_path(points: &Vec<Point>) -> Path {
     })
 }
 
-fn build_polygon_path(points: &Vec<Point>, poly_points: usize) -> Path {
+fn build_polygon_path(points: &Vec<Point>, poly_points: usize, angle: f32) -> Path {
     let n = poly_points;
-    let angle = 0.0-PI/n as f32;
+    // let poly_angle = angle;
     let center = points[0];
     let to = points[1];
     let radius = center.distance(to) as f32;
@@ -1221,9 +1252,11 @@ fn build_polygon_path(points: &Vec<Point>, poly_points: usize) -> Path {
     }
     points.push(points[0]);
 
+    let rotated_points = rotate_geometry(&points, center, &angle);
+
     Path::new(|p| {
-        p.move_to(points[0]);
-        for point in points.iter() {
+        p.move_to(rotated_points[0]);
+        for point in rotated_points.iter() {
             p.line_to(point.clone());
         }
     })

@@ -420,6 +420,7 @@ pub struct DrawCanvasCurve {
     curve_type: IpgCanvasWidget,
     points: Vec<DrawCanvasPoint>,
     poly_points: usize,
+    angle: f32,
     color: DrawColor,
     width: f32,
 }
@@ -455,7 +456,8 @@ fn convert_to_draw_curve_type(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
                                     poly_points: curve.poly_points,
                                     mid_point: Point::default(),
                                     first_click: false,
-                                    rotation: false, 
+                                    rotation: false,
+                                    angle: curve.angle, 
                                     color, 
                                     width: curve.width, 
                                     });
@@ -475,7 +477,8 @@ fn convert_to_draw_point_color(curves: &Vec<DrawCurve>) -> Vec<DrawCanvasCurve> 
         let width = curve.width;
         ipg_curves.push(DrawCanvasCurve { curve_type: curve.curve_type, 
                                             points: dp_points,
-                                            poly_points: curve.poly_points, 
+                                            poly_points: curve.poly_points,
+                                            angle: curve.angle, 
                                             color, 
                                             width,
                                         });
