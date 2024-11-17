@@ -502,6 +502,7 @@ impl DrawCurve {
             // during editing because there is no way to refresh
             // The pending routine will diplay the curve
             if !curve.first_click {
+                // if in edit mode put a small circle at each point
                 if curve_to_edit.is_some() && 
                     index == curve_to_edit.unwrap() {
                     let path = Path::new(|p| {
@@ -519,166 +520,45 @@ impl DrawCurve {
                     );
                 }
             } else {
+                // skiping index being edited
                 continue;
             }
             
-            match curve.curve_type {
-                IpgCanvasWidget::None => {
-                    ()
-                },
-                IpgCanvasWidget::Bezier => {
-                    let path = Path::new(|p| {
-                        p.move_to(curve.points[0]);
-                        p.quadratic_curve_to(curve.points[2], curve.points[1]);
-                    });
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::Circle => {
-                    let path = Path::new(|p| {
-                        let radius = curve.points[0].distance(curve.points[1]);
-                        p.circle(curve.points[0], radius);
-                    });
-                    
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::Line => {
-                    let path = Path::new(|p| {
-                        p.move_to(curve.points[0]);
-                        p.line_to(curve.points[1]);
-                    });
-                    
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::PolyLine => {
-                    let path = Path::new(|p| {
-                        for (index, point) in curve.points.iter().enumerate() {
-                            if index == 0 {
-                                p.move_to(point.clone());
-                            } else {
-                                p.line_to(point.clone());
-                            }
-                        }
-                    });
-
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::Polygon => {
-                    let n = curve.poly_points;
-                    let angle = 0.0-PI/n as f32;
-                    let center = curve.points[0];
-                    let to = curve.points[1];
-                    let radius = center.distance(to) as f32;
-                    let mut points = vec![];
-                    let pi_2_n = 2.0*PI/n as f32;
-
-                    for i in 0..n {
-                        let x = center.x as f32 + radius * (pi_2_n * i as f32 - angle).sin();
-                        let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
-                        points.push(Point { x: x as f32, y: y as f32 });
+            let path = 
+                match curve.curve_type {
+                    IpgCanvasWidget::Bezier => {
+                        build_bezier_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::Circle => {
+                        build_circle_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::Line => {
+                        build_line_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::PolyLine => {
+                        build_polyline_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::Polygon => {
+                        build_polygon_path(&curve.points, curve.poly_points, None, 0)
                     }
-                    points.push(points[0]);
+                    IpgCanvasWidget::Rectangle => {
+                        build_rectangle_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::Triangle => {
+                        build_triangle_path(&curve.points, None, 0)
+                    },
+                    IpgCanvasWidget::RightTriangle => {
+                        build_triangle_path(&curve.points, None, 0)
+                    },
+                    _ => Path::new(|_| {}),
+                };
 
-                    let path = Path::new(|p| {
-                        p.move_to(points[0]);
-                        for point in points.iter() {
-                            p.line_to(point.clone());
-                        }
-                    });
-
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                }
-                IpgCanvasWidget::Rectangle => {
-                    let width = (curve.points[1].x-curve.points[0].x).abs();
-                    let height = (curve.points[1].y-curve.points[0].y).abs();
-                    let size = Size{ width, height };
-
-                    let top_left = if curve.points[0].x < curve.points[1].x && curve.points[0].y > curve.points[1].y {
-                        // top right
-                        Point{ x: curve.points[0].x, y: curve.points[0].y-height }
-                    } else if curve.points[0].x > curve.points[1].x && curve.points[0].y > curve.points[1].y {
-                        // top_left
-                        Point{x: curve.points[0].x-width, y: curve.points[1].y}
-                    } else if curve.points[0].x > curve.points[1].x  && curve.points[0].y < curve.points[1].y {
-                        // bottom left
-                        Point{ x: curve.points[1].x, y: curve.points[0].y }
-                    } else if curve.points[0].x < curve.points[1].x  && curve.points[0].y < curve.points[1].y {
-                        // bottom right
-                        curve.points[0]
-                    } else {
-                        curve.points[1]
-                    };
-                    
-                    let path = Path::new(|p| {
-                        if curve_to_edit.is_some() && curve_to_edit == Some(index) {
-                            p.circle(curve.points[0], 2.0);
-                            p.circle(curve.points[1], 2.0);
-                        }
-                        p.rectangle(top_left, size);
-                    });
-                    
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::Triangle => {
-                    let path = Path::new(|p| {
-                        p.move_to(curve.points[0]);
-                        p.line_to(curve.points[1]);
-                        p.line_to(curve.points[2]);
-                        p.line_to(curve.points[0]);
-                    });
-                    
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-                IpgCanvasWidget::RightTriangle => {
-                    let path = Path::new(|p| {
-                        p.move_to(curve.points[0]);
-                        p.line_to(curve.points[1]);
-                        p.line_to(curve.points[2]);
-                        p.line_to(curve.points[0]);
-                    });
-                    
-                    frame.stroke(
-                        &path,
-                        Stroke::default()
-                            .with_width(curve.width)
-                            .with_color(curve.color),
-                    );
-                },
-            }
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_width(curve.width)
+                    .with_color(curve.color),
+            );
         }
 
     }
@@ -1303,6 +1183,126 @@ fn rotate_geometry(points: &Vec<Point>, theta: &f32) -> Vec<Point> {
     new_points
      
 }
+
+fn build_bezier_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    Path::new(|p| {
+        p.move_to(points[0]);
+        p.quadratic_curve_to(points[2], points[1]);
+    })
+}
+
+fn build_circle_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    Path::new(|p| {
+        p.circle(points[0], points[0].distance(points[1]));
+    })
+}
+
+fn build_line_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    Path::new(|p| {
+        p.move_to(points[0]);
+        p.line_to(points[1]);
+    })
+}
+
+fn build_polyline_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    Path::new(|p| {
+        for (index, point) in points.iter().enumerate() {
+            if index == 0 {
+                p.move_to(point.clone());
+            } else {
+                p.line_to(point.clone());
+            }
+        }
+    })
+}
+
+fn build_polygon_path(points: &Vec<Point>, poly_points: usize, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    let n = poly_points;
+    let angle = 0.0-PI/n as f32;
+    let center = points[0];
+    let to = points[1];
+    let radius = center.distance(to) as f32;
+    let mut points = vec![];
+    let pi_2_n = 2.0*PI/n as f32;
+
+    for i in 0..n {
+        let x = center.x as f32 + radius * (pi_2_n * i as f32 - angle).sin();
+        let y = center.y as f32 + radius * (pi_2_n * i as f32 - angle).cos();
+        points.push(Point { x: x as f32, y: y as f32 });
+    }
+    points.push(points[0]);
+
+    Path::new(|p| {
+        p.move_to(points[0]);
+        for point in points.iter() {
+            p.line_to(point.clone());
+        }
+    })
+}
+
+fn build_rectangle_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    let width = (points[1].x-points[0].x).abs();
+    let height = (points[1].y-points[0].y).abs();
+    let size = Size{ width, height };
+
+    let top_left = if points[0].x < points[1].x && points[0].y > points[1].y {
+        // top right
+        Point{ x: points[0].x, y: points[0].y-height }
+    } else if points[0].x > points[1].x && points[0].y > points[1].y {
+        // top_left
+        Point{x: points[0].x-width, y: points[1].y}
+    } else if points[0].x > points[1].x  && points[0].y < points[1].y {
+        // bottom left
+        Point{ x: points[1].x, y: points[0].y }
+    } else if points[0].x < points[1].x  && points[0].y < points[1].y {
+        // bottom right
+        points[0]
+    } else {
+        points[1]
+    };
+    
+    Path::new(|p| {
+        p.rectangle(top_left, size);
+    })
+}
+
+fn build_triangle_path(points: &Vec<Point>, cursor: Option<Point>, position: usize) -> Path {
+    let mut points = points.clone();
+    if cursor.is_some() {
+        points[position] = cursor.unwrap();
+    }
+    Path::new(|p| {
+        p.move_to(points[0]);
+        p.line_to(points[1]);
+        p.line_to(points[2]);
+        p.line_to(points[0]);
+    })
+}
+
 
 // #[derive(Debug)]
 // pub struct Counter {
