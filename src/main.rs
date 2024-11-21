@@ -5,13 +5,15 @@ use std::path::Path;
 
 use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
-use iced::widget::{button, column, container, pick_list, radio, row, text, text_input, vertical_space};
-use iced::{event, keyboard, Color, Element, Event, Point, Size, Subscription, Theme};
+use iced::widget::{button, column, container, 
+    pick_list, radio, row, text, text_input, vertical_space};
+use iced::{event, keyboard, Color, Element, 
+    Event, Point, Subscription, Theme};
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_mid_geometry, Bezier, CanvasMode, CanvasWidget, Circle, DrawCurve, Line, Polygon, Rectangle, RightTriangle, Triangle};
+use draw_canvas::{get_mid_geometry, Bezier, CanvasMode, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle};
 mod colors;
 
 
@@ -51,15 +53,12 @@ enum Message {
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
-            Message::AddCurve(curve) => {
+            Message::AddCurve(widget) => {
                 if self.state.edit_widget_index.is_some() {
-                    self.widgets[self.state.edit_widget_index.unwrap()] = curve.clone();
-                    // update the mid point, in case of a change
-                    self.state.edit_widget.mid_point = curve.mid_point.clone();
-                    self.state.rotation = curve.rotation;
-                    self.state.edit_widget = curve;
+                    self.widgets[self.state.edit_widget_index.unwrap()] = widget.clone();
+                    self.state.edit_widget = widget;
                 } else {
-                    self.widgets.push(curve);
+                    self.widgets.push(widget);
                 }
                 
                 self.state.request_redraw();
@@ -126,7 +125,8 @@ impl Example {
                                     points: vec![], 
                                     mid_point: Point::default(), 
                                     color: self.selected_color, 
-                                    width: self.selected_width});
+                                    width: self.selected_width,
+                                    draw_mode: DrawMode::DrawAll});
                     },
                     CanvasWidget::Circle(_) => {
                         self.state.selected_widget = CanvasWidget::Circle(
@@ -136,6 +136,7 @@ impl Example {
                                 radius: 0.0,
                                 color: self.selected_color,
                                 width: self.selected_width,
+                                draw_mode: DrawMode::DrawAll,
                             });
                     },
                     CanvasWidget::Line(_) => {
@@ -145,17 +146,19 @@ impl Example {
                                 mid_point: Point::default(),
                                 color: self.selected_color,
                                 width: self.selected_width,
+                                draw_mode: DrawMode::DrawAll,
                             }
                         );
                     },
                     CanvasWidget::PolyLine(_) => {
                         self.state.selected_widget = CanvasWidget::PolyLine(
-                            draw_canvas::PolyLine { 
+                            PolyLine { 
                                 points: vec![],
                                 mid_point: Point::default(),
-                                poly_points = self.selected_poly_points,
+                                poly_points: self.selected_poly_points,
                                 color: self.selected_color,
                                 width: self.selected_width,
+                                draw_mode: DrawMode::DrawAll,
                             }
                         );
                     },
@@ -167,6 +170,8 @@ impl Example {
                                 mid_point: Point::default(),
                                 color: self.selected_color,
                                 width: self.selected_width,
+                                pg_point: Point::default(),
+                                draw_mode: DrawMode::DrawAll,
                             }
                         );
                     },
@@ -177,6 +182,7 @@ impl Example {
                                 mid_point: Point::default(),
                                 color: self.selected_color,
                                 width: self.selected_width,
+                                draw_mode: DrawMode::DrawAll,
                             }
                         );
                     },
@@ -221,9 +227,9 @@ impl Example {
             Message::PolyInput(input) => {
                 // little error checking
                 if input != "" {
-                    self.state.poly_points = input.parse().unwrap();
+                    self.state.selected_poly_points = input.parse().unwrap();
                 } else {
-                    self.state.poly_points = 3;
+                    self.state.selected_poly_points = 3;
                 }
             }
         }
