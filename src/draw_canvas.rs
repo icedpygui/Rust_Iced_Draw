@@ -193,12 +193,9 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             // so redunant info.
                                             let widget = self.curves[index.unwrap()].widget.clone();
                                             let new_widget = 
-                                                update_widget(
+                                                update_draw_mode(
                                                     widget, 
-                                                    self.state.selected_poly_points, 
-                                                    self.state.selected_color,
-                                                    2.0,
-                                                    self.state.draw_mode, // important one
+                                                    self.state.draw_mode,
                                                 );
 
                                             Some(DrawCurve {
@@ -246,13 +243,19 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         edit_mid_point, 
                                     }) => {
                                         let edit_curve_index = edit_curve_index.clone();
-                                        let new_widget: CanvasWidget = 
+                                        let mut new_widget: CanvasWidget = 
                                                 edit_widget_points(
                                                     widget.clone(), 
                                                     cursor_position, 
                                                     edit_point_index.clone(), 
                                                     edit_mid_point.clone()
                                                 );
+                                        new_widget = 
+                                            update_draw_mode(
+                                                new_widget, 
+                                                DrawMode::DrawAll,
+                                            );
+                                        
                                         *program_state = None;
                                         Some(DrawCurve {
                                             widget: new_widget,
@@ -736,12 +739,96 @@ impl Pending {
                             .with_color(color),
                     );
                 },
-                Pending::EditSecond | Pending::EditThird { 
+                Pending::EditSecond { 
                     widget,
                     edit_curve_index: _, 
                     edit_point_index, 
                     edit_mid_point,  } => {
-                    dbg!("EditSecond");
+
+                    let (path, color, width) = match widget {
+                        CanvasWidget::None => {
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
+                        },
+                        CanvasWidget::Bezier(bz) => {
+                            let path = 
+                                build_bezier_path(
+                                    bz, 
+                                    DrawMode::Edit, 
+                                    Some(pending_cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, bz.color, bz.width)
+                        },
+                        CanvasWidget::Circle(cir) => {
+                            let path = 
+                                build_circle_path(
+                                    cir, 
+                                    DrawMode::Edit, 
+                                    Some(pending_cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, cir.color, cir.width)
+                        },
+                        CanvasWidget::Line(line) => {
+                            let path = 
+                                build_line_path(
+                                    line, 
+                                    DrawMode::Edit, 
+                                    None,
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, line.color, line.width)
+                        },
+                        CanvasWidget::PolyLine(pl) => {
+                            let path = 
+                                build_polyline_path(
+                                    pl, 
+                                    DrawMode::Edit, 
+                                    Some(pending_cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, pl.color, pl.width)
+                        },
+                        CanvasWidget::Polygon(pg) => {
+                            let path = 
+                                build_polygon_path(
+                                    pg, 
+                                    DrawMode::Edit, 
+                                    Some(pending_cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, pg.color, pg.width)
+                        },
+                        CanvasWidget::RightTriangle(r_tr) => {
+                            let path = 
+                                build_right_triangle_path(
+                                    r_tr, 
+                                    DrawMode::Edit, 
+                                    Some(pending_cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                );
+                            (path, r_tr.color, r_tr.width)
+                        },
+                    };
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(width)
+                            .with_color(color),
+                    );
+                },
+                Pending::EditThird { 
+                    widget,
+                    edit_curve_index:_, 
+                    edit_point_index, 
+                    edit_mid_point,  } => {
+
                     let (path, color, width) = match widget {
                         CanvasWidget::None => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
@@ -1159,6 +1246,41 @@ fn update_widget(widget: CanvasWidget,
     }
 }
 
+fn update_draw_mode(widget: CanvasWidget, 
+                    draw_mode: DrawMode,
+                    ) -> CanvasWidget {
+    match widget {
+        CanvasWidget::None => {
+            CanvasWidget::None
+        },
+        CanvasWidget::Bezier(mut bz) => {
+            bz.draw_mode = draw_mode;
+            CanvasWidget::Bezier(bz)
+        },
+        CanvasWidget::Circle(mut cir) => {
+            cir.draw_mode = draw_mode;
+            CanvasWidget::Circle(cir)
+        },
+        CanvasWidget::Line(mut ln) => {
+            ln.draw_mode = draw_mode;
+            CanvasWidget::Line(ln)
+        },
+        CanvasWidget::PolyLine(mut pl) => {
+            pl.draw_mode = draw_mode;
+            CanvasWidget::PolyLine(pl)
+        },
+        CanvasWidget::Polygon(mut pg) => {
+            pg.draw_mode = draw_mode;
+            CanvasWidget::Polygon(pg)
+        },
+        CanvasWidget::RightTriangle(mut tr) => {
+            tr.draw_mode = draw_mode;
+            CanvasWidget::RightTriangle(tr)
+        },
+    }
+
+}
+
 // Adds a cursor position to the points then determines 
 // if finish by returning the widget and the boolean
 fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWidget, bool) {
@@ -1279,8 +1401,13 @@ fn edit_widget_points(widget: CanvasWidget,
                 bz.points[index.unwrap()] = cursor;
                 bz.mid_point = get_mid_geometry(&bz.points, Widget::Bezier);
             } else if mid_point {
+                bz.points = 
+                    translate_geometry(
+                        bz.points, 
+                        cursor,
+                        bz.mid_point, 
+                        Widget::Bezier);
                 bz.mid_point = cursor;
-                bz.points = translate_geometry(bz.points, cursor, Widget::Bezier)
             }
             CanvasWidget::Bezier(bz)
         },
@@ -1289,11 +1416,16 @@ fn edit_widget_points(widget: CanvasWidget,
                 cir.circle_point = cursor;
                 cir.radius = cir.center.distance(cursor);
             } else if mid_point {
+                let mut points = vec![cir.circle_point];
+                points = 
+                    translate_geometry(
+                        points, 
+                        cursor,
+                        cir.center,
+                        Widget::Circle,
+                    );
                 cir.center = cursor;
-                let mut points = vec![cir.center, cir.circle_point];
-                points = translate_geometry(points, cursor, Widget::Circle);
-                cir.center = points[0];
-                cir.circle_point = points[1];
+                cir.circle_point = points[0];
             }
 
             CanvasWidget::Circle(cir)
@@ -1302,8 +1434,13 @@ fn edit_widget_points(widget: CanvasWidget,
             if index.is_some() {
                 line.points[index.unwrap()] = cursor;
             } else if mid_point {
+                line.points = 
+                    translate_geometry(
+                        line.points.clone(), 
+                        cursor,
+                        line.mid_point, 
+                        Widget::Line);
                 line.mid_point = cursor;
-                line.points = translate_geometry(line.points.clone(), cursor, Widget::Line);
             }
 
             CanvasWidget::Line(line)
@@ -1312,8 +1449,13 @@ fn edit_widget_points(widget: CanvasWidget,
             if index.is_some() {
                 pl.points[index.unwrap()] = cursor;
             } else if mid_point {
+                pl.points = 
+                    translate_geometry(
+                        pl.points.clone(), 
+                        cursor,
+                        pl.mid_point, 
+                        Widget::PolyLine);
                 pl.mid_point = cursor;
-                pl.points = translate_geometry(pl.points.clone(), cursor, Widget::PolyLine);
             }
 
             CanvasWidget::PolyLine(pl)
@@ -1323,24 +1465,37 @@ fn edit_widget_points(widget: CanvasWidget,
                 pg.pg_point = cursor;
                 pg.points = build_polygon(pg.mid_point, pg.pg_point, pg.poly_points)
             } else if mid_point {
-                let mut pts = vec![pg.mid_point, pg.pg_point];
-                pts = translate_geometry(pts, cursor, Widget::Polygon);
-                pg.points = build_polygon(pts[0], pts[1], pg.poly_points);
-                pg.mid_point = pts[0];
-                pg.pg_point = pts[1];
+                let mut pts = vec![pg.pg_point];
+                pts = 
+                    translate_geometry(
+                        pts, 
+                        cursor,
+                        pg.mid_point, 
+                        Widget::Polygon
+                    );
+                pg.points = build_polygon(cursor, pts[0], pg.poly_points);
+                pg.mid_point = cursor;
+                pg.pg_point = pts[0];
             }
 
             CanvasWidget::Polygon(pg)
         },
-        CanvasWidget::RightTriangle(mut r_tr) => {
+        CanvasWidget::RightTriangle(mut tr) => {
             if index.is_some() {
-                r_tr.points[index.unwrap()] = cursor;
+                tr.points[index.unwrap()] = cursor;
             } else if mid_point {
-                r_tr.mid_point = cursor;
-                r_tr.points = translate_geometry(r_tr.points.clone(), cursor, Widget::RightTriangle);
+                
+                tr.points = 
+                    translate_geometry(
+                        tr.points.clone(), 
+                        cursor,
+                        tr.mid_point, 
+                        Widget::RightTriangle
+                    );
+                tr.mid_point = cursor;
             }
 
-            CanvasWidget::RightTriangle(r_tr)
+            CanvasWidget::RightTriangle(tr)
         },
     }
 }
@@ -1374,7 +1529,7 @@ fn find_closest_point_index(widget: &CanvasWidget,
                             ) 
                             -> (Option<usize>, bool) {
 
-    let mut distance: f32 = 1000000.0;
+    let mut point_dist: f32 = 1_000_000.0;
     let mut point_index = 0;
 
     match widget {
@@ -1382,14 +1537,15 @@ fn find_closest_point_index(widget: &CanvasWidget,
         CanvasWidget::Bezier(bezier) => {
             for (idx, point) in bezier.points.iter().enumerate() {
                 let dist = cursor.distance(*point);
-                if  dist < distance {
+                if  dist < point_dist {
                     point_index = idx;
-                    distance = dist;
+                    point_dist = dist;
                 }
             };
             
             let mid_dist = bezier.mid_point.distance(cursor);
-            if mid_dist < distance {
+
+            if mid_dist < point_dist {
                 (None, true)
             } else {
                 (Some(point_index), false)
@@ -1405,17 +1561,17 @@ fn find_closest_point_index(widget: &CanvasWidget,
             }
         } 
         CanvasWidget::Line(line) => {
-            let mut pts = line.points.clone();
-            pts.push(line.mid_point);
             for (idx, point) in line.points.iter().enumerate() {
                 let dist = cursor.distance(*point);
-                if  dist < distance {
+                if  dist < point_dist {
                     point_index = idx;
-                    distance = dist;
+                    point_dist = dist;
                 }
             };
             
-            if point_index == 2 {
+            let mid_dist = cursor.distance(line.mid_point);
+
+            if mid_dist < point_dist {
                 (None, true)
             } else {
                 (Some(point_index), false)
@@ -1424,14 +1580,14 @@ fn find_closest_point_index(widget: &CanvasWidget,
         CanvasWidget::PolyLine(poly_line) => {
             for (idx, point) in poly_line.points.iter().enumerate() {
                 let dist = cursor.distance(*point);
-                if  dist < distance {
+                if  dist < point_dist {
                     point_index = idx;
-                    distance = dist;
+                    point_dist = dist;
                 }
             };
             
             let mid_dist = poly_line.mid_point.distance(cursor);
-            if mid_dist < distance {
+            if mid_dist < point_dist {
                 (None, true)
             } else {
                 (Some(point_index), false)
@@ -1449,14 +1605,14 @@ fn find_closest_point_index(widget: &CanvasWidget,
         CanvasWidget::RightTriangle(tr) => {
             for (idx, point) in tr.points.iter().enumerate() {
                 let dist = cursor.distance(*point);
-                if  dist < distance {
+                if  dist < point_dist {
                     point_index = idx;
-                    distance = dist;
+                    point_dist = dist;
                 }
             };
             
             let mid_dist = tr.mid_point.distance(cursor);
-            if mid_dist < distance {
+            if mid_dist < point_dist {
                 (None, true)
             } else {
                 (Some(point_index), false)
@@ -1513,10 +1669,10 @@ pub fn get_mid_geometry(pts: &Vec<Point>, curve_type: Widget) -> Point {
 }
 
 fn translate_geometry(pts: Vec<Point>, 
-                        new_center: Point, 
+                        new_center: Point,
+                        old_center: Point, 
                         curve_type: Widget) 
                         -> Vec<Point> {
-    let old_center = get_mid_geometry(&pts, curve_type);
     let mut new_pts = vec![];
     let dist_x = new_center.x - old_center.x;
     let dist_y = new_center.y - old_center.y;
@@ -1576,7 +1732,8 @@ fn build_bezier_path(bz: &Bezier,
                 let points = if edit_mid_point {
                     translate_geometry(
                         bz.points.clone(), 
-                        pending_cursor.unwrap(), 
+                        pending_cursor.unwrap(),
+                        bz.mid_point, 
                         Widget::Bezier)
                 } else if edit_point_index.is_some() {
                     let mut pts = bz.points.clone();
@@ -1628,23 +1785,25 @@ fn build_circle_path(cir: &Circle,
                 p.circle(cir.center, cir.radius);
             },
             DrawMode::Edit => {
-                let mut pts = vec![cir.center, cir.circle_point];
-                let points = if edit_mid_point {
-                    translate_geometry(
-                        pts, 
-                        pending_cursor.unwrap(), 
-                        Widget::Polygon)
-                } else if edit_point_index.is_some() {
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    pts
-                } else {
-                    pts
-                };
+                let mut center = cir.center;
+                let mut cir_point = cir.circle_point;
+                if edit_mid_point {
+                    cir_point = translate_geometry(
+                        vec![cir.circle_point], 
+                        pending_cursor.unwrap(),
+                        cir.center,
+                        Widget::Polygon
+                    )[0];
+                    center = pending_cursor.unwrap();
+                }
+                if edit_point_index.is_some() {
+                    cir_point = pending_cursor.unwrap();
+                }
 
-                p.move_to(points[0]);
-                p.line_to(points[1]);
-                p.circle(points[0], 3.0);
-                p.circle(points[1], 3.0);
+                p.move_to(center);
+                p.line_to(cir_point);
+                p.circle(center, 3.0);
+                p.circle(cir_point, 3.0);
             },
             DrawMode::New => {
                 let circle_point = pending_cursor.unwrap();
@@ -1671,31 +1830,27 @@ fn build_line_path(line: &Line,
                 p.line_to(line.points[1]);
             },
             DrawMode::Edit => {
-                dbg!(edit_mid_point);
-                let points = if edit_mid_point {
-                    let mut pts = translate_geometry(
-                        line.points.clone(), 
-                        pending_cursor.unwrap(), 
+                let mut pts = line.points.clone();
+                let mut mid_point = line.mid_point;
+                if edit_mid_point {
+                    pts = translate_geometry(
+                        pts, 
+                        pending_cursor.unwrap(),
+                        mid_point,
                         Widget::Line
                     );
-                    pts.push(pending_cursor.unwrap());
-                    pts
-                } else if edit_point_index.is_some() {
-                    let mut pts = line.points.clone();
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    pts.push(line.mid_point);
-                    pts 
-                } else {
-                    line.points.clone()
+                    mid_point = pending_cursor.unwrap();
                 };
 
-                p.move_to(points[0]);
-                p.line_to(points[1]);
-
-                for point in points {
-                    p.circle(point, 3.0);
+                if edit_point_index.is_some() {
+                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
                 }
-                p.circle(line.mid_point, 3.0);
+
+                p.move_to(pts[0]);
+                p.line_to(pts[1]);
+                p.circle(pts[0], 3.0);
+                p.circle(pts[1], 3.0);
+                p.circle(mid_point, 3.0);
             },
             DrawMode::New => {
                 p.move_to(line.points[0]);
@@ -1727,22 +1882,22 @@ fn build_polyline_path(pl: &PolyLine,
             },
             DrawMode::Edit => {
                 let mut mid_point = pl.mid_point;
-                let points = if edit_mid_point {
-                    mid_point = pending_cursor.unwrap();
-                    translate_geometry(
-                        pl.points.clone(), 
-                        pending_cursor.unwrap(), 
-                        Widget::PolyLine
-                    )
-                } else if edit_point_index.is_some() {
-                    let mut pts = pl.points.clone();
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    pts
-                } else {
-                    pl.points.clone()
-                };
+                let mut pts = vec![];
 
-                for (index, point) in points.iter().enumerate() {
+                if edit_mid_point {
+                    pts = translate_geometry(
+                        pl.points.clone(), 
+                        pending_cursor.unwrap(),
+                        mid_point, 
+                        Widget::PolyLine
+                    );
+                    mid_point = pending_cursor.unwrap();
+                } 
+                if edit_point_index.is_some() {
+                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
+                }
+
+                for (index, point) in pts.iter().enumerate() {
                     p.circle(*point, 3.0);
                     if index == 0 {
                         p.move_to(*point);
@@ -1789,23 +1944,26 @@ fn build_polygon_path(pg: &Polygon,
                 p.line_to(points[0]);
             },
             DrawMode::Edit => {
-                let points = if edit_mid_point {
-                    translate_geometry(
-                        vec![pg.mid_point, pg.pg_point], 
-                        pending_cursor.unwrap(), 
-                        Widget::Polygon)
-                } else if edit_point_index.is_some() {
-                    let mut pts = pg.points.clone();
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    pts
-                } else {
-                    pg.points.clone()
-                };
+                let mut mid_point = pg.mid_point;
+                let mut pg_point = pg.pg_point;
 
-                p.move_to(points[0]);
-                p.line_to(points[1]);
-                p.circle(points[0], 3.0);
-                p.circle(points[1], 3.0);
+                if edit_mid_point {
+                    pg_point = translate_geometry(
+                        vec![pg.pg_point], 
+                        pending_cursor.unwrap(),
+                        pg.mid_point, 
+                        Widget::Polygon
+                    )[0];
+                    mid_point = pending_cursor.unwrap();
+                } 
+                if edit_point_index.is_some() {
+                    pg_point = pending_cursor.unwrap();
+                }
+
+                p.move_to(mid_point);
+                p.line_to(pg_point);
+                p.circle(mid_point, 3.0);
+                p.circle(pg_point, 3.0);
             },
             DrawMode::New => {
                 let points = 
@@ -1841,15 +1999,17 @@ fn build_right_triangle_path(tr: &RightTriangle,
             },
             DrawMode::Edit => {
                 let mut mid_point = tr.mid_point;
-                let points = if edit_mid_point {
-                    mid_point = pending_cursor.unwrap();
-                    translate_geometry(
+                let mut pts = tr.points.clone();
+                if edit_mid_point {
+                    pts = translate_geometry(
                         tr.points.clone(), 
-                        pending_cursor.unwrap(), 
+                        pending_cursor.unwrap(),
+                        mid_point, 
                         Widget::PolyLine
-                    )
-                } else if edit_point_index.is_some() {
-                    let mut pts = tr.points.clone();
+                    );
+                    mid_point = pending_cursor.unwrap();
+                } 
+                if edit_point_index.is_some() {
                     let index = edit_point_index.unwrap();
                     let mut cursor = pending_cursor.unwrap();
                     if index == 1 {
@@ -1859,12 +2019,9 @@ fn build_right_triangle_path(tr: &RightTriangle,
                         cursor.x = pts[1].x;
                     }
                     pts[edit_point_index.unwrap()] = cursor;
-                    pts
-                } else {
-                    tr.points.clone()
-                };
+                }
 
-                for (index, point) in points.iter().enumerate() {
+                for (index, point) in pts.iter().enumerate() {
                     p.circle(*point, 3.0);
                     if index == 0 {
                         p.move_to(*point);
@@ -1872,7 +2029,7 @@ fn build_right_triangle_path(tr: &RightTriangle,
                         p.line_to(*point);
                     }
                 }
-                p.line_to(points[0]);
+                p.line_to(pts[0]);
                 p.circle(mid_point, 3.0);
             },
             DrawMode::New => {
