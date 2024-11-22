@@ -38,7 +38,6 @@ enum Message {
     Clear,
     DeleteLast,
     ModeSelected(String),
-    EditNext,
     RadioSelected(Widget),
     Event(Event),
     Load,
@@ -51,9 +50,8 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(draw_curve) => {
-                if self.state.edit_widget_index.is_some() {
-                    self.curves[self.state.edit_widget_index.unwrap()] = draw_curve.clone();
-                    self.state.edit_draw_curve = draw_curve;
+                if draw_curve.edit_curve_index.is_some() {
+                    self.curves[draw_curve.edit_curve_index.unwrap()] = draw_curve.clone();
                 } else {
                     self.curves.push(draw_curve);
                 }
@@ -83,7 +81,6 @@ impl Example {
                             return
                         }
                         self.state.edit_widget_index = Some(0);
-                        self.state.edit_draw_curve = self.curves[0].clone();
                         self.state.draw_mode = DrawMode::Edit;
                     },
                     DrawMode::New => {
@@ -95,23 +92,6 @@ impl Example {
                     },
                 }
                 
-                self.state.request_redraw();
-            },
-            Message::EditNext => {
-                let mut idx = if self.state.edit_widget_index.is_none() {
-                    return
-                } else {
-                    self.state.edit_widget_index.unwrap()
-                };
-                
-                idx += 1;
-                self.state.edit_widget_index = if idx > self.curves.len()-1 {
-                    Some(0)
-                } else {
-                    Some(idx)
-                };
-
-                self.state.edit_draw_curve = self.curves[self.state.edit_widget_index.unwrap()].clone();
                 self.state.request_redraw();
             },
             Message::RadioSelected(choice) => {
@@ -352,12 +332,6 @@ impl Example {
             Some(self.state.draw_mode.string()), 
             Message::ModeSelected).into();
 
-
-        let edit_next: Element<Message> = 
-            button("Edit Next")
-                .on_press(Message::EditNext)
-                .into();
-        
         let save: Element<Message> = 
             button("Save")
                 .padding(5.0)
@@ -388,7 +362,6 @@ impl Example {
             r_triangle,
             draw_mode,
             mode,
-            edit_next,
             poly_pts_input,
             load_save_row,
             colors,

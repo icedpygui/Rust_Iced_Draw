@@ -1,8 +1,7 @@
 
 use std::f32::consts::PI;
-use iced::widget::text::draw;
 // use std::sync::{Mutex, MutexGuard};
-use iced::{mouse, widget, Color, Size};
+use iced::{mouse, Color};
 use iced::widget::canvas::event::{self, Event};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
@@ -55,7 +54,6 @@ pub struct State {
     cache: canvas::Cache,
     pub draw_mode: DrawMode,
     pub draw_width: f32,
-    pub edit_draw_curve: DrawCurve,
     pub edit_widget_index: Option<usize>,
     pub rotation: bool,
     pub escape_pressed: bool,
@@ -65,10 +63,6 @@ pub struct State {
     pub selected_color_str: Option<String>,
     pub selected_widget_index: usize,
     pub selected_poly_points: usize,
-    pub first_left_click: bool,
-    pub second_left_click: bool,
-    pub first_right_click: bool,
-    pub second_right_click: bool,
 }
 
 impl Default for State {
@@ -78,7 +72,6 @@ impl Default for State {
                 draw_mode: DrawMode::DrawAll,
                 draw_width: 2.0,
                 edit_widget_index: None,
-                edit_draw_curve: DrawCurve::default(),
                 rotation: false,
                 escape_pressed: false,
                 selected_widget: CanvasWidget::None,
@@ -87,10 +80,6 @@ impl Default for State {
                 selected_color_str: None,
                 selected_widget_index: 0,
                 selected_poly_points: 5,
-                first_left_click: false,
-                second_left_click: false,
-                first_right_click: false,
-                second_right_click: false,
              }
         }
 }
@@ -165,30 +154,33 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // 2 - find closest point
                                     // 3 - finish
                                     None => {
-                                        let closest = 1_000_000_f32;
+                                        let mut closest = 1_000_000_f32;
                                         let mut index = None;
                                         for (idx, curve) in self.curves.iter().enumerate() {
-                                            let distance: f32 = get_distance(curve, cursor_position);
+                                            let distance: f32 = get_distance_to_mid_point(curve, cursor_position);
                                             if distance < closest {
                                                 index = Some(idx);
+                                                closest = distance;
                                             }
                                         }
                                         
                                         if index.is_some() {
-                                            // using the generic EditWidget to reduce 
-                                            // the large matching code required for CanvasWidget.
-                                            let mut selected_widget = 
-                                                update_get_widget(
-                                                    &self.curves[index.unwrap()].widget, 
+                                            // closest widget is found
+                                            // update the widget in case the 
+                                            // edit dropdown was selected first
+                                            // then other changes selected
+                                            let selected_widget = 
+                                                update_widget(
+                                                    self.curves[index.unwrap()].widget.clone(), 
                                                     self.state.selected_poly_points, 
                                                     self.state.selected_color,
                                                     2.0,
                                                     self.state.draw_mode
                                                 );
                                             *program_state = Some(Pending::EditSecond {
-                                                edit_widget: selected_widget,
+                                                widget: selected_widget,
                                                 edit_curve_index: index,
-                                                edit_point_index: None,
+                                                edit_point_index: None, 
                                                 edit_mid_point: false,
                                             });
                                             // returning DrawCurve so that the curve
@@ -199,17 +191,20 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             // update date the curve to indicate that
                                             // it is in edit mode.  Just using same method
                                             // so redunant info.
-                                            let widget = 
+                                            let widget = self.curves[index.unwrap()].widget.clone();
+                                            let new_widget = 
                                                 update_widget(
-                                                    self.curves[index.unwrap()].widget, 
+                                                    widget, 
                                                     self.state.selected_poly_points, 
-                                                    self.state.selected_color, 
+                                                    self.state.selected_color,
+                                                    2.0,
                                                     self.state.draw_mode, // important one
                                                 );
 
                                             Some(DrawCurve {
-                                                widget,
+                                                widget: new_widget,
                                                 first_click: true,
+                                                edit_curve_index: index,
                                                 rotation: false,
                                                 angle: 0.0,
                                             })
@@ -222,21 +217,20 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // This second click will find the point
                                     // and replace with cursor
                                     Some(Pending::EditSecond { 
-                                        edit_widget,
+                                        widget,
                                         edit_curve_index,
-                                        edit_point_index,
-                                        edit_mid_point, 
+                                        edit_point_index: _, 
+                                        edit_mid_point: _,
                                     }) => {
-                                        let mut edit_widget = edit_widget.clone();
-                    
                                         // Find for closest point to edit in selected widget
                                         // which might be either a mid point(translate) or 
                                         // curve point (move point).
+                                        let widget = widget.clone();
                                         let (point_index, mid_point) = 
-                                            find_closest_edit_point_index(edit_widget.points, cursor_position);
+                                            find_closest_point_index(&widget, cursor_position);
 
                                         *program_state = Some(Pending::EditThird {
-                                            edit_widget,
+                                            widget,
                                             edit_curve_index: *edit_curve_index,
                                             edit_point_index: point_index,
                                             edit_mid_point: mid_point,
@@ -246,23 +240,24 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // The third click will send back the DrawCurve
                                     // with the finally updated curve
                                     Some(Pending::EditThird { 
-                                        edit_widget,
+                                        widget,
                                         edit_curve_index,
                                         edit_point_index,
                                         edit_mid_point, 
                                     }) => {
-                                        *program_state = None;
+                                        let edit_curve_index = edit_curve_index.clone();
                                         let new_widget: CanvasWidget = 
                                                 edit_widget_points(
                                                     widget.clone(), 
                                                     cursor_position, 
-                                                    edit_point_index, 
-                                                    edit_mid_point
+                                                    edit_point_index.clone(), 
+                                                    edit_mid_point.clone()
                                                 );
-
+                                        *program_state = None;
                                         Some(DrawCurve {
                                             widget: new_widget,
                                             first_click: true,
+                                            edit_curve_index,
                                             rotation: false,
                                             angle: 0.0,
                                         })
@@ -279,9 +274,10 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         // the widget selected
                                         let selected_widget = 
                                             update_widget(
-                                                &self.state.selected_widget, 
+                                                self.state.selected_widget.clone(), 
                                                 self.state.selected_poly_points,
                                                 self.state.selected_color,
+                                                2.0,
                                                 self.state.draw_mode,
                                             );
                                         let (widget, _) = set_widget_point(&selected_widget, cursor_position);
@@ -310,6 +306,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve {
                                                         widget: CanvasWidget::Bezier(bezier),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -318,6 +315,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve {
                                                         widget: CanvasWidget::Circle(circle),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -326,6 +324,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve {
                                                         widget: CanvasWidget::Line(line),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -334,6 +333,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve{
                                                         widget: CanvasWidget::PolyLine(pl),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -343,6 +343,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve {
                                                         widget:CanvasWidget::Polygon(pg),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -351,6 +352,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     Some(DrawCurve {
                                                         widget: CanvasWidget::RightTriangle(r_tr),
                                                         first_click: false,
+                                                        edit_curve_index: None,
                                                         rotation: false,
                                                         angle: 0.0,
                                                     })
@@ -500,6 +502,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
 pub struct DrawCurve {
     pub widget: CanvasWidget,
     pub first_click: bool,
+    pub edit_curve_index: Option<usize>,
     pub rotation: bool,
     pub angle: f32,
 }
@@ -508,78 +511,104 @@ impl DrawCurve {
     fn draw_all(curves: &[DrawCurve], frame: &mut Frame, _theme: &Theme) {
         // This draw only occurs at the completion of the widget(update occurs) and cache is cleared
         
-        for draw_curve in curves.iter() {
+        for (index, draw_curve) in curves.iter().enumerate() {
             // if first click, skip the curve to be edited so that it 
             // will not be seen until the second click.  Otherwise is shows
             // during editing because there is no way to refresh
             // The pending routine will diplay the curve
-            dbg!(draw_curve);
+
             let (path, color, width) = 
                 match &draw_curve.widget {
                     CanvasWidget::Bezier(bz) => {
-                        
-                        (build_bezier_path(
+                        if bz.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_bezier_path(
                             bz, 
                             bz.draw_mode, 
                             None, 
                             None, 
-                            false), 
-                            &bz.color, &bz.width)
+                            false)), 
+                            Some(bz.color), Some(bz.width))
+                        }
                     },
                     CanvasWidget::Circle(cir) => {
-                        (build_circle_path(
-                            cir, 
-                            cir.draw_mode,
-                            None, 
-                            None, 
-                            false), 
-                            &cir.color, &cir.width)
+                        if cir.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_circle_path(
+                                cir, 
+                                cir.draw_mode,
+                                None, 
+                                None, 
+                                false)), 
+                                Some(cir.color), Some(cir.width))
+                        }
                     },
                     CanvasWidget::Line(line) => {
-                        (build_line_path(
-                            line, 
-                            line.draw_mode, 
-                            None, 
-                            None, 
-                            false), 
-                            &line.color, &line.width)
+                        if line.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_line_path(
+                                line, 
+                                line.draw_mode, 
+                                None, 
+                                None, 
+                                false)), 
+                                Some(line.color), Some(line.width))
+                        }
                     },
                     CanvasWidget::PolyLine(pl) => {
-                        (build_polyline_path(
-                            pl, 
-                            pl.draw_mode, 
-                            None, 
-                            None, 
-                            false), 
-                            &pl.color, &pl.width)
+                        if pl.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_polyline_path(
+                                pl, 
+                                pl.draw_mode, 
+                                None, 
+                                None, 
+                                false)), 
+                                Some(pl.color), Some(pl.width))
+                        }
                     },
                     CanvasWidget::Polygon(pg) => {
-                        (build_polygon_path(
-                            pg, 
-                            pg.draw_mode, 
-                            None, 
-                            None, 
-                            false), 
-                            &pg.color, &pg.width)
+                        if pg.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_polygon_path(
+                                pg, 
+                                pg.draw_mode, 
+                                None, 
+                                None, 
+                                false)), 
+                                Some(pg.color), Some(pg.width))
+                        }
                     }
-                    CanvasWidget::RightTriangle(r_tr) => {
-                        (build_right_triangle_path(
-                            r_tr, 
-                            r_tr.draw_mode, 
-                            None, 
-                            None, 
-                            false), 
-                            &r_tr.color, &r_tr.width)
+                    CanvasWidget::RightTriangle(tr) => {
+                        if tr.draw_mode == DrawMode::Edit {
+                            (None, None, None)
+                        } else {
+                            (Some(build_right_triangle_path(
+                                tr, 
+                                tr.draw_mode, 
+                                None, 
+                                None, 
+                                false)), 
+                                Some(tr.color), Some(tr.width))
+                        }
                     },
-                    CanvasWidget::None => (Path::new(|_| {}), &Color::BLACK, &0.0),
+                    CanvasWidget::None => (None, None, None),
                 };
-
-            frame.stroke(
-                &path,
+            
+            if path.is_some() {
+                frame.stroke(
+                &path.unwrap(),
                 Stroke::default()
-                    .with_width(*width)
-                    .with_color(*color),
-            );
+                    .with_width(width.unwrap())
+                    .with_color(color.unwrap()),
+                );
+            }
+            
         }
 
     }
@@ -594,13 +623,13 @@ enum Pending {
         widget: CanvasWidget, 
     },
     EditSecond {
-        edit_widget: EditWidget, 
+        widget: CanvasWidget, 
         edit_curve_index: Option<usize>,
-        edit_point_index: Option<usize>,
+        edit_point_index: Option<usize>, 
         edit_mid_point: bool,
         },
     EditThird {
-        edit_widget: EditWidget, 
+        widget: CanvasWidget, 
         edit_curve_index: Option<usize>,
         edit_point_index: Option<usize>,
         edit_mid_point: bool,
@@ -707,13 +736,12 @@ impl Pending {
                             .with_color(color),
                     );
                 },
-                Pending::Edit { 
+                Pending::EditSecond | Pending::EditThird { 
                     widget,
-                    first_click: _,
-                    second_click: _ ,
                     edit_curve_index: _, 
                     edit_point_index, 
                     edit_mid_point,  } => {
+                    dbg!("EditSecond");
                     let (path, color, width) = match widget {
                         CanvasWidget::None => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
@@ -876,6 +904,7 @@ impl Pending {
                     //         .with_color(color),
                     // );
                 },
+                _ => (),
             };
         }
 
@@ -960,7 +989,7 @@ pub enum Widget {
 //     }
 // }
 
-fn get_distance(draw_curve: &DrawCurve, cursor: Point) -> f32 {
+fn get_distance_to_mid_point(draw_curve: &DrawCurve, cursor: Point) -> f32 {
 
         let distance = match &draw_curve.widget {
             CanvasWidget::None => 1_000_000_f32,
@@ -1082,6 +1111,7 @@ fn update_get_widget(widget: &CanvasWidget,
 fn update_widget(widget: CanvasWidget, 
                 poly_points: usize, 
                 selected_color: Color,
+                selected_width: f32,
                 draw_mode: DrawMode) 
                 -> CanvasWidget {
     match widget {
@@ -1090,33 +1120,39 @@ fn update_widget(widget: CanvasWidget,
         },
         CanvasWidget::Bezier(mut bz) => {
             bz.color = selected_color;
+            bz.width = selected_width;
             bz.draw_mode = draw_mode;
             CanvasWidget::Bezier(bz)
         },
         CanvasWidget::Circle(mut cir) => {
             cir.color = selected_color;
+            cir.width = selected_width;
             cir.draw_mode = draw_mode;
             CanvasWidget::Circle(cir)
         },
         CanvasWidget::Line(mut ln) => {
             ln.color = selected_color;
+            ln.width = selected_width;
             ln.draw_mode = draw_mode;
             CanvasWidget::Line(ln)
         },
         CanvasWidget::PolyLine(mut pl) => {
             pl.color = selected_color;
+            pl.width = selected_width;
             pl.poly_points = poly_points;
             pl.draw_mode = draw_mode;
             CanvasWidget::PolyLine(pl)
         },
         CanvasWidget::Polygon(mut pg) => {
             pg.color = selected_color;
+            pg.width = selected_width;
             pg.poly_points = poly_points;
             pg.draw_mode = draw_mode;
             CanvasWidget::Polygon(pg)
         },
         CanvasWidget::RightTriangle(mut tr) => {
             tr.color = selected_color;
+            tr.width = selected_width;
             tr.draw_mode = draw_mode;
             CanvasWidget::RightTriangle(tr)
         },
@@ -1138,6 +1174,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             } else {
                 false
             };
+            if finished {
+                bz.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::Bezier(bz), finished)
         },
         CanvasWidget::Circle(circle) => {
@@ -1150,6 +1189,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
                 cir.draw_mode = DrawMode::DrawAll;
                 true
             };
+            if finished {
+                cir.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::Circle(cir), finished)
         },
         CanvasWidget::Line(line) => {
@@ -1162,6 +1204,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             } else {
                 false
             };
+            if finished {
+                ln.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::Line(ln), finished)
         },
         CanvasWidget::PolyLine(poly_line) => {
@@ -1174,6 +1219,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             } else {
                 false
             };
+            if finished {
+                pl.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::PolyLine(pl), finished)
         },
         CanvasWidget::Polygon(polygon) => {
@@ -1186,7 +1234,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
                 pg.draw_mode = DrawMode::DrawAll;
                 true
             };
-
+            if finished {
+                pg.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::Polygon(pg), finished)
         },
         CanvasWidget::RightTriangle(right_triangle) => {
@@ -1207,6 +1257,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             } else {
                 false
             };
+            if finished {
+                rt.draw_mode = DrawMode::DrawAll;
+            }
             (CanvasWidget::RightTriangle(rt), finished)
         },
     }
@@ -1316,8 +1369,9 @@ fn find_closest_edit_point_index(
     
 }
 
-fn find_closest_point_index(cursor: Point, 
-                            widget: &CanvasWidget, ) 
+fn find_closest_point_index(widget: &CanvasWidget,
+                            cursor: Point, 
+                            ) 
                             -> (Option<usize>, bool) {
 
     let mut distance: f32 = 1000000.0;
@@ -1617,6 +1671,7 @@ fn build_line_path(line: &Line,
                 p.line_to(line.points[1]);
             },
             DrawMode::Edit => {
+                dbg!(edit_mid_point);
                 let points = if edit_mid_point {
                     let mut pts = translate_geometry(
                         line.points.clone(), 
@@ -1636,9 +1691,11 @@ fn build_line_path(line: &Line,
 
                 p.move_to(points[0]);
                 p.line_to(points[1]);
+
                 for point in points {
                     p.circle(point, 3.0);
                 }
+                p.circle(line.mid_point, 3.0);
             },
             DrawMode::New => {
                 p.move_to(line.points[0]);
