@@ -405,7 +405,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     self.state.draw_mode
                                                 );
                                             let step_angle: f32 = 0.0;
-                                            let step_count = 0;
+                                            let step_count = 0.0;
                                             let angle = 0.0;
                                             *program_state = Some(Pending::Rotate {
                                                 widget: selected_widget,
@@ -479,12 +479,39 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                     mouse::Event::WheelScrolled { delta } => {
                         match self.state.draw_mode {
                             DrawMode::Rotate => {
-                                dbg!(delta);
-                                None
+                                match program_state {
+                                    None => None,
+                                    
+                                    Some(Pending::Rotate { 
+                                        widget,
+                                        step_angle:_,
+                                        step_count,
+                                        angle:_,
+                                             
+                                    }) => {
+                                        let delta = match delta {
+                                            mouse::ScrollDelta::Lines { x:_, y } => y,
+                                            mouse::ScrollDelta::Pixels { x:_, y } => y,
+                                        };
+                                        let step_count = *step_count + delta;
+                                        
+                                        let widget = 
+                                            rotate_geometry(widget, 0.5);
+                                        
+                                        *program_state = Some(Pending::Rotate{
+                                            widget,
+                                            step_angle: 0.0,
+                                            step_count,
+                                            angle: 0.0,
+                                        });
+                                        None
+                                        
+                                    },
+                                    _ => None,
+                                }
                             },
                             _ => None,
                         }
-                
                     },
                     _ => None,
                 };
@@ -747,13 +774,13 @@ enum Pending {
     Rotate {
         widget: CanvasWidget,
         step_angle: f32,
-        step_count: i32,
+        step_count: f32,
         angle: f32,
     },
     RotateSecond {
         widget: CanvasWidget,
         step_angle: f32,
-        step_count: i32,
+        step_count: f32,
         angle: f32,
     }
 }
@@ -1737,14 +1764,51 @@ fn translate_geometry(pts: Vec<Point>,
     new_pts
 }
 
+fn rotate_geometry(widget: &mut CanvasWidget, theta: f32) -> CanvasWidget {
+
+    match widget {
+        CanvasWidget::None => CanvasWidget::None,
+        CanvasWidget::Bezier(bz) => {
+            let mut bz = bz.clone();
+            bz.points = rotate_widget(bz.points, bz.mid_point, theta);
+            CanvasWidget::Bezier(bz.clone())
+        },
+        CanvasWidget::Circle(cir) => {
+            let mut cir = cir.clone();
+            cir.circle_point = rotate_widget(vec![cir.circle_point], cir.center, theta)[0];
+            CanvasWidget::Circle(cir.clone())
+        },
+        CanvasWidget::Line(line) => {
+            let mut line = line.clone();
+            line.points = rotate_widget(line.points, line.mid_point, theta);
+            CanvasWidget::Line(line.clone())
+        },
+        CanvasWidget::PolyLine(pl) => {
+            let mut pl = pl.clone();
+            pl.points = rotate_widget(pl.points, pl.mid_point, theta);
+            CanvasWidget::PolyLine(pl.clone())
+        },
+        CanvasWidget::Polygon(pg) => {
+            let mut pg = pg.clone();
+            pg.points = rotate_widget(pg.points, pg.mid_point, theta);
+            CanvasWidget::Polygon(pg.clone())
+        },
+        CanvasWidget::RightTriangle(tr) => {
+            let mut tr = tr.clone();
+            tr.points = rotate_widget(tr.points, tr.mid_point, theta);
+            CanvasWidget::RightTriangle(tr)
+        },
+    }
+
+}
+
 // To rotate a point (x, y) around a center point (cx, cy) by an angle θ, 
 // the formula for the rotated coordinates (x', y') is: 
 // x' = (x - cx) * cos(θ) - (y - cy) * sin(θ) + cx and 
 // y' = (x - cx) * sin(θ) + (y - cy) * cos(θ) + cy; 
 // where (x, y) is the original point, (cx, cy) is the center of rotation, 
 //and θ is the rotation angle in radians. 
-fn rotate_geometry(points: &Vec<Point>, center: Point, theta: &f32) -> Vec<Point> {
-
+fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
     let mut new_points = vec![];
     for point in points.iter() {
         let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
@@ -1754,7 +1818,6 @@ fn rotate_geometry(points: &Vec<Point>, center: Point, theta: &f32) -> Vec<Point
     }
     
     new_points
-     
 }
 
 fn build_polygon(mid_point: Point, point: Point, num_points: usize) -> Vec<Point> {
