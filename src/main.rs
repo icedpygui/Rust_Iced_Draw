@@ -88,7 +88,8 @@ impl Example {
                         self.state.draw_mode = DrawMode::New;
                     },
                     DrawMode::Rotate => {
-
+                        self.state.edit_widget_index = None;
+                        self.state.draw_mode = DrawMode::Rotate;
                     },
                 }
                 
@@ -325,7 +326,7 @@ impl Example {
             .into();
 
         
-        let mode_options = vec!["None".to_string(), "New".to_string(), "Edit".to_string()];
+        let mode_options = vec!["None".to_string(), "New".to_string(), "Edit".to_string(), "Rotate".to_string()];
         let mode: Element<Message> = 
         pick_list(
             mode_options, 

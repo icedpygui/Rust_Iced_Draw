@@ -149,7 +149,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             },
                             DrawMode::Edit => {
                                 match program_state {
-                                    // edit consists of 3 clikcs
+                                    // edit consists of 3 clicks
                                     // 1 - find closest widget
                                     // 2 - find closest point
                                     // 3 - finish
@@ -375,16 +375,121 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 }
                             },
                             DrawMode::Rotate => {
-                                None
+                                match program_state {
+                                    // rotation consists of 2 clicks
+                                    // 1 - find closest widget
+                                    //  - move mouse wheel
+                                    // 2 - click to finish
+                                    None => {
+                                        let mut closest = 1_000_000_f32;
+                                        let mut index = None;
+                                        for (idx, curve) in self.curves.iter().enumerate() {
+                                            let distance: f32 = get_distance_to_mid_point(curve, cursor_position);
+                                            if distance < closest {
+                                                index = Some(idx);
+                                                closest = distance;
+                                            }
+                                        }
+                                        
+                                        if index.is_some() {
+                                            // closest widget is found
+                                            // update the widget in case the 
+                                            // edit dropdown was selected first
+                                            // then other changes selected
+                                            let selected_widget = 
+                                                update_widget(
+                                                    self.curves[index.unwrap()].widget.clone(), 
+                                                    self.state.selected_poly_points, 
+                                                    self.state.selected_color,
+                                                    2.0,
+                                                    self.state.draw_mode
+                                                );
+                                            let step_angle: f32 = 0.0;
+                                            let step_count = 0;
+                                            let angle = 0.0;
+                                            *program_state = Some(Pending::Rotate {
+                                                widget: selected_widget,
+                                                step_angle,
+                                                step_count,
+                                                angle,
+                                            });
+                                            // returning DrawCurve so that the curve
+                                            // being editied will not show after the refresh
+                                            // The pending process will show the curve
+                                            // until its finsihed.
+
+                                            // update the curve to indicate that
+                                            // it is in rotation mode.  Just using same method
+                                            // so redundant info.
+                                            let widget = self.curves[index.unwrap()].widget.clone();
+                                            
+                                            let new_widget = 
+                                                update_draw_mode(
+                                                    widget, 
+                                                    self.state.draw_mode,
+                                                );
+
+                                            Some(DrawCurve {
+                                                widget: new_widget,
+                                                first_click: true,
+                                                edit_curve_index: index,
+                                                rotation: true,
+                                                angle: step_angle * step_count as f32,
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                    // The second click will send back the DrawCurve
+                                    // with the finally updated curve
+                                    // Some(Pending::EditThird { 
+                                    //     widget,
+                                    //     edit_curve_index,
+                                    //     edit_point_index,
+                                    //     edit_mid_point, 
+                                    // }) => {
+                                    //     let edit_curve_index = edit_curve_index.clone();
+                                    //     let mut new_widget: CanvasWidget = 
+                                    //             edit_widget_points(
+                                    //                 widget.clone(), 
+                                    //                 cursor_position, 
+                                    //                 edit_point_index.clone(), 
+                                    //                 edit_mid_point.clone()
+                                    //             );
+                                    //     new_widget = 
+                                    //         update_draw_mode(
+                                    //             new_widget, 
+                                    //             DrawMode::DrawAll,
+                                    //         );
+                                        
+                                    //     *program_state = None;
+                                    //     Some(DrawCurve {
+                                    //         widget: new_widget,
+                                    //         first_click: false,
+                                    //         edit_curve_index,
+                                    //         rotation: false,
+                                    //         angle: 0.0,
+                                    //     })
+                                    // },
+                                    _ => None,
+                                }
                             },
                         }
                     },
-                    
+                    mouse::Event::WheelScrolled { delta } => {
+                        match self.state.draw_mode {
+                            DrawMode::Rotate => {
+                                dbg!(delta);
+                                None
+                            },
+                            _ => None,
+                        }
+                
+                    },
                     _ => None,
                 };
-
                 (event::Status::Captured, message)
-            }
+            },
             _ => (event::Status::Ignored, None),
         }
     }
@@ -639,9 +744,15 @@ enum Pending {
         edit_point_index: Option<usize>,
         edit_mid_point: bool,
         },
-    Rotation {
+    Rotate {
         widget: CanvasWidget,
-        step: f32,
+        step_angle: f32,
+        step_count: i32,
+        angle: f32,
+    },
+    RotateSecond {
+        widget: CanvasWidget,
+        step_angle: f32,
         step_count: i32,
         angle: f32,
     }
@@ -909,27 +1020,43 @@ impl Pending {
                             .with_color(color),
                     );
                 },
-                Pending::Rotation {
+                Pending::Rotate {
                     widget,
-                    step: _,
+                    step_angle: _,
                     step_count: _,
                     angle: _, 
                 } => {
-                    // let (path, color, width) = match widget {
-                    //     CanvasWidget::None => {
-                    //         (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
-                    //     },
-                    //     CanvasWidget::Bezier(bz) => {
-                    //         let path = 
-                    //             build_bezier_path(
-                    //                 bz, 
-                    //                 DrawMode::Rotate, 
-                    //                 None,
-                    //                 None,
-                    //                 false,
-                    //             );
-                    //         (path, bz.color, bz.width)
-                    //     },
+                    let (path, color, width, position) = match widget {
+                        CanvasWidget::Bezier(bz) => {
+                            let path = 
+                                build_bezier_path(
+                                    bz, 
+                                    DrawMode::Rotate, 
+                                    None,
+                                    None, 
+                                    false,
+                                );
+                            let mid_point = Point::new(bz.mid_point.x-5.0, bz.mid_point.y-5.0);
+                            (path, bz.color, bz.width, mid_point)
+                        },
+                        _ => {
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default())
+                        }
+
+                    };
+                    frame.fill_text(canvas::Text {
+                        position: position,
+                        color: Color::WHITE,
+                        size: 10.0.into(),
+                        content: String::from("10"),
+                        ..canvas::Text::default()
+                    });
+                    frame.stroke(
+                        &path,
+                        Stroke::default()
+                            .with_width(width)
+                            .with_color(color),
+                    );
                     //     CanvasWidget::Circle(cir) => {
                     //         let path = 
                     //             build_circle_path(
@@ -996,7 +1123,7 @@ impl Pending {
                 _ => (),
             };
         }
-
+        
         frame.into_geometry()
     }
 }
@@ -1115,86 +1242,6 @@ struct EditWidget {
     pub width: f32,
     pub draw_mode: DrawMode,
 }
-
-// fn update_get_widget(widget: &CanvasWidget, 
-//                     poly_points: usize, 
-//                     color: Color,
-//                     width: f32,
-//                     draw_mode: DrawMode) 
-//                     -> EditWidget {
-//     match widget {
-//         CanvasWidget::Bezier(bz) => {
-//             let mut points = bz.points.clone();
-//             points.insert(0, bz.mid_point);
-
-//             EditWidget {
-//                 name: Widget::Bezier,
-//                 points,
-//                 poly_points: 0,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         CanvasWidget::Circle(cir) => {
-//             EditWidget {
-//                 name: Widget::Circle,
-//                 points: vec![cir.center, cir.circle_point],
-//                 poly_points: 0,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         CanvasWidget::Line(ln) => {
-//             let mut points = ln.points.clone();
-//             points.insert(0, ln.mid_point);
-
-//             EditWidget {
-//                 name: Widget::Line,
-//                 points: points,
-//                 poly_points: 0,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         CanvasWidget::PolyLine(pl) => {
-//             let mut points = pl.points.clone();
-//             points.insert(0, pl.mid_point);
-//             EditWidget {
-//                 name: Widget::PolyLine,
-//                 points,
-//                 poly_points: poly_points,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         CanvasWidget::Polygon(pg) => {
-//             EditWidget {
-//                 name: Widget::Polygon,
-//                 points: vec![pg.mid_point, pg.pg_point],
-//                 poly_points: poly_points,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         CanvasWidget::RightTriangle(tr) => {
-//             let points = tr.points.clone();
-//             EditWidget {
-//                 name: Widget::RightTriangle,
-//                 points: points,
-//                 poly_points: 0,
-//                 color,
-//                 width,
-//                 draw_mode,
-//             }
-//         },
-//         _ => panic!("EditWidget not found")
-//     }
-// }
 
 fn update_widget(widget: CanvasWidget, 
                 poly_points: usize, 
@@ -1772,7 +1819,10 @@ fn build_bezier_path(bz: &Bezier,
                 }
             },
             DrawMode::Rotate => {
-
+                p.move_to(bz.points[0]);
+                p.quadratic_curve_to(bz.points[2], bz.points[1]);
+                // p.circle(bz.mid_point, 10.0);
+                
             },
         }
     })
