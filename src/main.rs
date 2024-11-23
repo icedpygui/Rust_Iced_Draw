@@ -161,6 +161,8 @@ impl Example {
                                     pg_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
+                                    angle: 0.0,
+                                    degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
