@@ -1341,9 +1341,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             };
             if finished {
                 pg.draw_mode = DrawMode::DrawAll;
-                let v1 = Point { x: pg.mid_point.x, y: 10.0 };
-                let v2 = Point{x: pg.mid_point.x, y: cursor_position.y};
-                pg.degrees = angle_of_vectors(v1, v2, true)
+                let p1 = Point { x: pg.mid_point.x, y: 10.0 };
+                let p2 = Point{x: pg.mid_point.x, y: cursor_position.y};
+                pg.degrees = angle_of_vectors(pg.mid_point, p1, p2, true)
             }
             (CanvasWidget::Polygon(pg), finished)
         },
@@ -1722,17 +1722,14 @@ fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
     new_points
 }
 
-fn angle_of_vectors(v1: Point, v2: Point, degrees: bool) -> f32 {
-    let mag_1 = (v1.x*v1.x + v1.y*v1.y).sqrt();
-    let mag_2 = (v2.x*v2.x + v2.y*v2.y).sqrt();
-
-    let dot = (v1.x*v2.x) + (v1.y*v2.y);
+fn angle_of_vectors(center: Point, p1: Point, p2: Point, degrees: bool) -> f32 {
+    let angle = (p1.y - center.y).atan2(p1.x - center.x) -
+                    (p2.y - center.y).atan2(p2.x - center.x);
     if degrees {
-        (dot/(mag_1*mag_2)).acos()*180.0/PI
+        angle*180.0/PI
     } else {
-        (dot/(mag_1*mag_2)).acos()
+        angle
     }
-    
 }
 
 fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f32) -> Vec<Point> {
@@ -2028,9 +2025,10 @@ fn build_polygon_path(pg: &Polygon,
             },
             DrawMode::New => {
                 let cursor = pending_cursor.unwrap();
-                let v1 = Point{x: pg.mid_point.x, y:10.0};
-                let v2 = Point{ x: pg.mid_point.x, y: cursor.y };
-                let degrees = angle_of_vectors(v1, v2, true);
+                let p1 = Point{x: pg.mid_point.x, y:10.0};
+                let p2 = cursor;
+                let degrees = angle_of_vectors(pg.mid_point, p1, p2, true);
+                dbg!(&degrees);
                 let points = 
                     build_polygon(
                         pg.mid_point, 
