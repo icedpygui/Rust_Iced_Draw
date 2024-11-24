@@ -1,5 +1,5 @@
 //! This example showcases an interactive `Canvas` for drawing Bézier curves.
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -161,7 +161,6 @@ impl Example {
                                     pg_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
-                                    angle: 0.0,
                                     degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
@@ -181,6 +180,7 @@ impl Example {
                             );
                         self.state.selected_radio_widget = Some(Widget::RightTriangle);
                     },
+                    Widget::None => (),
                 } 
             },
             Message::Event(Event::Keyboard(keyboard::Event::KeyPressed {
@@ -197,17 +197,16 @@ impl Example {
             },
             Message::Event(_) => (),
             Message::Load => {
-                // let path = Path::new("./resources/data.json");
-                // let data = fs::read_to_string(path).expect("Unable to read file");
-                // let curves = serde_json::from_str(&data).expect("Unable to parse");
-                // self.curves = convert_to_draw_curve_type(curves);
-                // self.curves = add_mid_point(self.curves.clone());
-                // self.state.request_redraw();
+                let path = Path::new("./resources/data.json");
+                let data = fs::read_to_string(path).expect("Unable to read file");
+                let widgets = serde_json::from_str(&data).expect("Unable to parse");
+                self.curves = import_widgets(widgets);
+                self.state.request_redraw();
             }
             Message::Save => {
-                // let path = Path::new("./resources/data.json");
-                // let curves = convert_to_draw_point_color(&self.curves);
-                // let _ = save(path, &curves);
+                let path = Path::new("./resources/data.json");
+                let widgets = convert_to_export(&self.curves);
+                let _ = save(path, &widgets);
             }
             Message::ColorSelected(color_str) => {
                 let f: DrawCanvasColor = match color_str.as_str() {
@@ -221,10 +220,11 @@ impl Example {
             },
             Message::PolyInput(input) => {
                 // little error checking
+                self.state.selected_poly_points_str = input.clone();
                 if input != "" {
                     self.state.selected_poly_points = input.parse().unwrap();
                 } else {
-                    self.state.selected_poly_points = 3;
+                    self.state.selected_poly_points = 4; //default
                 }
             }
         }
@@ -317,13 +317,8 @@ impl Example {
 
         let widths: Element<Message> = text(format!("widths = {}", 2.0)).into();
 
-        let poly_input = if self.state.selected_poly_points == 0 {
-            ""
-        } else {
-            &self.state.selected_poly_points.to_string()
-        };
         let poly_pts_input: Element<Message> = 
-            text_input("Poly Points", poly_input)
+            text_input("Poly Points(4)", &self.state.selected_poly_points_str)
             .on_input(Message::PolyInput)
             .into();
 
@@ -402,13 +397,27 @@ pub fn save(path: impl AsRef<Path>, data: &impl Serialize) -> std::io::Result<()
 // iced Point does not derive any serialization 
 // so had to use own version for saving data.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct DrawCanvasPoint{
+pub struct ExportPoint{
     x: f32,
     y: f32,
 }
 
+impl ExportPoint {
+    fn convert(point: &Point) -> Self {
+        ExportPoint {x: point.x, y: point.y}
+    }
+
+    pub fn distance(&self, to: Self) -> f32
+    {
+        let a = self.x - to.x;
+        let b = self.y - to.y;
+
+        a.hypot(b)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-pub struct DrawColor {
+pub struct ExportColor {
     /// Red component, 0.0 - 1.0
     pub r: f32,
     /// Green component, 0.0 - 1.0
@@ -419,66 +428,192 @@ pub struct DrawColor {
     pub a: f32,
 }
 
-impl DrawColor {
-    pub const fn from_rgba(r: f32, g: f32, b: f32, a: f32) -> DrawColor {
-        DrawColor { r, g, b, a }
+impl ExportColor {
+    pub const fn from_rgba(color: &Color) -> ExportColor {
+        ExportColor { r: color.r, g: color.g, b: color.b, a: color.a }
     }
 }
 
-// fn convert_to_draw_curve_type(curves: Vec<DrawCanvasCurve>) -> Vec<DrawCurve> {
-//     let mut iced_curves = vec![];
-//     for curve in curves {
-//         let mut dc_points = vec![];
-//         for point in curve.points.iter() {
-//             dc_points.push(convert_to_iced_point(point.clone()));
-//         }
-//         let color = Color{ r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
-//         iced_curves.push(DrawCurve { widget: curve.curve_type, 
-//                                     points: dc_points, 
-//                                     poly_points: curve.poly_points,
-//                                     mid_point: Point::default(),
-//                                     first_click: false,
-//                                     rotation: false,
-//                                     angle: curve.angle, 
-//                                     color, 
-//                                     width: curve.width, 
-//                                     });
-//     }
-//     iced_curves
-// }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportWidget {
+    pub name: Widget,
+    pub points: Vec<ExportPoint>,
+    pub poly_points: usize,
+    pub mid_point: ExportPoint,
+    pub color: ExportColor,
+    pub width: f32,
+    pub rotation: Option<f32>,
+}
 
-// fn convert_to_draw_point_color(curves: &Vec<DrawCurve>) -> Vec<DrawCanvasCurve> {
-//     let mut ipg_curves = vec![];
-//     for curve in curves {
-//         let mut dp_points = vec![];
-//         for point in curve.points.iter() {
-//             dp_points.push(convert_to_draw_point(point.clone()));
-//         }
+fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
+    
+    let mut vec_dc = vec![];
 
-//         let color = DrawColor { r: curve.color.r, g: curve.color.g, b: curve.color.b, a: curve.color.a };
-//         let width = curve.width;
-//         ipg_curves.push(DrawCanvasCurve { curve_type: curve.widget, 
-//                                             points: dp_points,
-//                                             poly_points: curve.poly_points,
-//                                             angle: curve.angle, 
-//                                             color, 
-//                                             width,
-//                                         });
-//     }
-//     ipg_curves
-// }
+    for widget in widgets.iter() {
+        match widget.name {
+            Widget::None => {
+                vec_dc.push(DrawCurve{
+                    widget: CanvasWidget::None,
+                    edit_curve_index: None,
+                })
+            },
+            Widget::Bezier => {
+                let bz = Bezier {
+                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    mid_point: convert_to_point(&widget.mid_point),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Bezier(bz),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::Circle => {
+                let cir = Circle {
+                    center: convert_to_point(&widget.mid_point),
+                    circle_point: convert_to_point(&widget.points[0]),
+                    radius: widget.mid_point.distance(widget.points[0]),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Circle(cir),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::Line => {
+                let ln = Line {
+                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    mid_point: convert_to_point(&widget.mid_point),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Line(ln),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::PolyLine => {
+                let pl = PolyLine {
+                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    poly_points: widget.poly_points,
+                    mid_point: convert_to_point(&widget.mid_point),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::PolyLine(pl),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::Polygon => {
+                let pg = Polygon {
+                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    poly_points: widget.poly_points,
+                    mid_point: convert_to_point(&widget.mid_point),
+                    pg_point: convert_to_point(&widget.points[0]),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    degrees: widget.rotation.unwrap(),
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Polygon(pg),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::RightTriangle => {
+                let tr = RightTriangle {
+                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    mid_point: convert_to_point(&widget.mid_point),
+                    color: convert_to_color(&widget.color),
+                    width: widget.width,
+                    draw_mode: DrawMode::DrawAll,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::RightTriangle(tr),
+                    edit_curve_index: None,
+                });
+            },
+        }
+    }
 
-// fn convert_to_iced_point(ipg_point: DrawCanvasPoint) -> Point {
-//     Point { x: ipg_point.x, y: ipg_point.y }
-// }
-// fn convert_to_draw_point(point: Point) -> DrawCanvasPoint {
-//     DrawCanvasPoint { x: point.x, y: point.y }
-// }
+    vec_dc
 
-// fn add_mid_point(mut curves: Vec<DrawCurve>) -> Vec<DrawCurve> {
-//     for curve in curves.iter_mut() {
-//         let mid = get_mid_geometry(&curve.points, curve.widget);
-//         curve.mid_point = mid;
-//     }
-//     curves
-// }
+}
+
+fn convert_to_export(curves: &Vec<DrawCurve>) -> Vec<ExportWidget> {
+    let mut widgets = vec![];
+    for curve in curves.iter() {
+        widgets.push(curve.widget.clone())
+    }   
+    
+    let mut export = vec![];
+
+    for widget in widgets.iter() {
+
+        let (name, 
+            points, 
+            mid_point, 
+            poly_points, 
+            color, 
+            width, 
+            rotation) = 
+            match widget {
+                CanvasWidget::None => {
+                    (Widget::None, &vec![], Point::default(), 0, Color::TRANSPARENT, 0.0, None)
+                },
+                CanvasWidget::Bezier(bz) => {
+                    (Widget::Bezier, &bz.points, bz.mid_point, 0, bz.color, bz.width, None)
+                },
+                CanvasWidget::Circle(cir) => {
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, 0, cir.color, cir.width, None)
+                },
+                CanvasWidget::Line(ln) => {
+                    (Widget::Line, &ln.points, ln.mid_point, 0, ln.color, ln.width, None)
+                },
+                CanvasWidget::PolyLine(pl) => {
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.poly_points, pl.color, pl.width, None)
+                },
+                CanvasWidget::Polygon(pg) => {
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.poly_points, pg.color, pg.width, Some(pg.degrees))
+                },
+                CanvasWidget::RightTriangle(tr) => {
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, 3, tr.color, tr.width, None)
+                },
+        };
+
+        let x_color = ExportColor::from_rgba(&color);
+        let x_mid_pt = ExportPoint::convert(&mid_point);
+        let mut x_points = vec![];
+        for point in points.iter() {
+            x_points.push(ExportPoint::convert(&point));
+        }
+        export.push(
+            ExportWidget{
+                name,
+                points: x_points,
+                poly_points, 
+                mid_point: x_mid_pt, 
+                color: x_color, 
+                width, 
+                rotation, 
+            })
+    }
+    
+    export
+
+}
+
+fn convert_to_point(point: &ExportPoint) -> Point {
+    Point { x: point.x, y: point.y }
+}
+
+fn convert_to_color(color: &ExportColor) -> Color {
+    Color::from_rgba(color.r, color.g, color.b, color.a)
+}
