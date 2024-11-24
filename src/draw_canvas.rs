@@ -149,18 +149,8 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         }
                                         
                                         if index.is_some() {
-                                            // closest widget is found
-                                            // update the widget in case the 
-                                            // edit dropdown was selected first
-                                            // then other changes selected
                                             let selected_widget = 
-                                                update_widget(
-                                                    self.curves[index.unwrap()].widget.clone(), 
-                                                    self.state.selected_poly_points, 
-                                                    self.state.selected_color,
-                                                    2.0,
-                                                    self.state.draw_mode
-                                                );
+                                                self.curves[index.unwrap()].widget.clone();
                                             
                                             *program_state = Some(Pending::EditSecond {
                                                 widget: selected_widget,
@@ -448,8 +438,18 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         let step_count = *step_count + delta;
                                         let theta: f32 = PI/180.0 * step * delta;
                                         let mut degrees = step_count * step;
-
+                                        
                                         degrees = degrees % 360.0;
+
+                                        degrees = if degrees <= 0.0 {
+                                            let mut degs = 360.0 + degrees;
+                                            if degs == 360.0 {
+                                                degs = 0.0;
+                                            }
+                                            degs
+                                        } else {
+                                            degrees
+                                        };
 
                                         let widget = 
                                             rotate_geometry(widget, theta);
@@ -689,7 +689,7 @@ impl Pending {
                 Pending::N { 
                     widget, 
                 } => {
-                    let (path, color, width) = match widget {
+                    let (path, color, width, degrees, mid_point) = match widget {
                         CanvasWidget::Bezier(bz) => {
                             let path = 
                                 build_bezier_path(
@@ -699,7 +699,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, bz.color, bz.width)
+                            (path, bz.color, bz.width, None, None)
                         },
                         CanvasWidget::Circle(cir) => {
                             let path = 
@@ -710,7 +710,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, cir.color, cir.width)
+                            (path, cir.color, cir.width, None, None)
                         },
                         CanvasWidget::Line(line) => {
                             let path = 
@@ -721,7 +721,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, line.color, line.width)
+                            (path, line.color, line.width, None, None)
                         },
                         // return points as they are set
                         CanvasWidget::PolyLine(pl) => {
@@ -733,7 +733,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, pl.color, pl.width)
+                            (path, pl.color, pl.width, None, None)
                         },
                         CanvasWidget::Polygon(pg) => {
                             let path = 
@@ -744,7 +744,8 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, pg.color, pg.width)
+                            
+                            (path, pg.color, pg.width, Some(pg.degrees), Some(pg.mid_point))
                         },
                         CanvasWidget::RightTriangle(r_tr) => {
                             let path = 
@@ -755,10 +756,24 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, r_tr.color, r_tr.width)
+                            (path, r_tr.color, r_tr.width, None, None)
                         },
-                        _ => (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
+                        _ => (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None)
                     };
+
+                    if degrees.is_some() {
+                        let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
+                        let mid_point = mid_point.unwrap();
+                        let position = Point::new(mid_point.x-5.0, mid_point.y-5.0);
+                        frame.fill_text(canvas::Text {
+                            position: position,
+                            color: Color::WHITE,
+                            size: 10.0.into(),
+                            content: degrees,
+                            ..canvas::Text::default()
+                        });
+                    }
+
                     frame.stroke(
                         &path,
                         Stroke::default()
@@ -1326,6 +1341,9 @@ fn set_widget_point(widget: &CanvasWidget, cursor_position: Point) -> (CanvasWid
             };
             if finished {
                 pg.draw_mode = DrawMode::DrawAll;
+                let v1 = Point { x: pg.mid_point.x, y: 10.0 };
+                let v2 = Point{x: pg.mid_point.x, y: cursor_position.y};
+                pg.degrees = angle_of_vectors(v1, v2, true)
             }
             (CanvasWidget::Polygon(pg), finished)
         },
@@ -1704,6 +1722,19 @@ fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
     new_points
 }
 
+fn angle_of_vectors(v1: Point, v2: Point, degrees: bool) -> f32 {
+    let mag_1 = (v1.x*v1.x + v1.y*v1.y).sqrt();
+    let mag_2 = (v2.x*v2.x + v2.y*v2.y).sqrt();
+
+    let dot = (v1.x*v2.x) + (v1.y*v2.y);
+    if degrees {
+        (dot/(mag_1*mag_2)).acos()*180.0/PI
+    } else {
+        (dot/(mag_1*mag_2)).acos()
+    }
+    
+}
+
 fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f32) -> Vec<Point> {
     
     let angle = 2.0 * PI / poly_points as f32;
@@ -1996,12 +2027,16 @@ fn build_polygon_path(pg: &Polygon,
                 p.circle(pg_point, 3.0);
             },
             DrawMode::New => {
+                let cursor = pending_cursor.unwrap();
+                let v1 = Point{x: pg.mid_point.x, y:10.0};
+                let v2 = Point{ x: pg.mid_point.x, y: cursor.y };
+                let degrees = angle_of_vectors(v1, v2, true);
                 let points = 
                     build_polygon(
                         pg.mid_point, 
                         pending_cursor.unwrap(), 
                         pg.poly_points,
-                        pg.degrees,
+                        degrees,
                     );
                 for (index, point) in points.iter().enumerate() {
                     if index == 0 {
