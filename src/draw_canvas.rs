@@ -77,7 +77,7 @@ impl Default for State {
                 selected_radio_widget: None,
                 selected_color: Color::WHITE,
                 selected_color_str: None,
-                selected_poly_points: 4,
+                selected_poly_points: 3,
                 selected_poly_points_str: "".to_string(),
              }
         }
@@ -275,9 +275,18 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                 CanvasWidget::None => {
                                                     None
                                                 },
-                                                CanvasWidget::Bezier(bezier) => {
+                                                CanvasWidget::Bezier(mut bz) => {
+                                                    let p1 = Point{x: bz.mid_point.x, y: 10.0};
+                                                    let degrees = 
+                                                        angle_of_vectors(
+                                                            bz.mid_point, 
+                                                            p1, 
+                                                            cursor_position, 
+                                                            true);
+
+                                                    bz.degrees = degrees;
                                                     Some(DrawCurve {
-                                                        widget: CanvasWidget::Bezier(bezier),
+                                                        widget: CanvasWidget::Bezier(bz),
                                                         edit_curve_index: None,
                                                     })
                                                 },
@@ -300,14 +309,23 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     })
                                                 },
                                                 CanvasWidget::Polygon(mut pg) => {
+                                                    let p1 = Point{x: pg.mid_point.x, y: 10.0};
+                                                    let degrees = 
+                                                        angle_of_vectors(
+                                                            pg.mid_point, 
+                                                            p1, 
+                                                            cursor_position, 
+                                                            true);
+
+                                                    pg.degrees = degrees;
                                                     pg.points = 
                                                         build_polygon(
                                                             pg.mid_point, 
                                                             pg.pg_point, 
                                                             pg.poly_points,
-                                                            pg.degrees
+                                                            pg.degrees,
                                                         );
-
+                                                    
                                                     Some(DrawCurve {
                                                         widget:CanvasWidget::Polygon(pg),
                                                         edit_curve_index: None,
@@ -544,13 +562,15 @@ impl DrawCurve {
                             bz.draw_mode == DrawMode::Rotate {
                             (None, None, None)
                         } else {
-                            (Some(build_bezier_path(
-                            bz, 
-                            bz.draw_mode, 
-                            None, 
-                            None, 
-                            false)), 
-                            Some(bz.color), Some(bz.width))
+                            let (path, _degrees) = 
+                                build_bezier_path(
+                                bz, 
+                                bz.draw_mode, 
+                                None, 
+                                None, 
+                                false);
+
+                            (Some(path), Some(bz.color), Some(bz.width))
                         }
                     },
                     CanvasWidget::Circle(cir) => {
@@ -604,13 +624,15 @@ impl DrawCurve {
                             pg.draw_mode == DrawMode::Rotate {
                             (None, None, None)
                         } else {
-                            (Some(build_polygon_path(
+                            let (path, _degrees) = 
+                            build_polygon_path(
                                 pg, 
                                 pg.draw_mode, 
                                 None, 
                                 None, 
-                                false)), 
-                                Some(pg.color), Some(pg.width))
+                                false);
+                                
+                            (Some(path), Some(pg.color), Some(pg.width))
                         }
                     }
                     CanvasWidget::RightTriangle(tr) => {
@@ -691,7 +713,7 @@ impl Pending {
                 } => {
                     let (path, color, width, degrees, mid_point) = match widget {
                         CanvasWidget::Bezier(bz) => {
-                            let path = 
+                            let (path, degrees) = 
                                 build_bezier_path(
                                     bz, 
                                     DrawMode::New, 
@@ -699,7 +721,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, bz.color, bz.width, None, None)
+                            (path, bz.color, bz.width, Some(degrees), Some(bz.mid_point))
                         },
                         CanvasWidget::Circle(cir) => {
                             let path = 
@@ -736,7 +758,7 @@ impl Pending {
                             (path, pl.color, pl.width, None, None)
                         },
                         CanvasWidget::Polygon(pg) => {
-                            let path = 
+                            let (path, degrees) = 
                                 build_polygon_path(
                                     pg,
                                     DrawMode::New, 
@@ -745,7 +767,7 @@ impl Pending {
                                     false,
                                 );
                             
-                            (path, pg.color, pg.width, Some(pg.degrees), Some(pg.mid_point))
+                            (path, pg.color, pg.width, Some(degrees), Some(pg.mid_point))
                         },
                         CanvasWidget::RightTriangle(r_tr) => {
                             let path = 
@@ -764,7 +786,7 @@ impl Pending {
                     if degrees.is_some() {
                         let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
                         let mid_point = mid_point.unwrap();
-                        let position = Point::new(mid_point.x-5.0, mid_point.y-5.0);
+                        let position = Point::new(mid_point.x-10.0, mid_point.y-10.0);
                         frame.fill_text(canvas::Text {
                             position: position,
                             color: Color::WHITE,
@@ -792,7 +814,7 @@ impl Pending {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
                         },
                         CanvasWidget::Bezier(bz) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_bezier_path(
                                     bz, 
                                     DrawMode::Edit, 
@@ -836,7 +858,7 @@ impl Pending {
                             (path, pl.color, pl.width)
                         },
                         CanvasWidget::Polygon(pg) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_polygon_path(
                                     pg, 
                                     DrawMode::Edit, 
@@ -876,7 +898,7 @@ impl Pending {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
                         },
                         CanvasWidget::Bezier(bz) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_bezier_path(
                                     bz, 
                                     DrawMode::Edit, 
@@ -920,7 +942,7 @@ impl Pending {
                             (path, pl.color, pl.width)
                         },
                         CanvasWidget::Polygon(pg) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_polygon_path(
                                     pg, 
                                     DrawMode::Edit, 
@@ -957,7 +979,7 @@ impl Pending {
                 } => {
                     let (path, color, width, mid_point) = match widget {
                         CanvasWidget::Bezier(bz) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_bezier_path(
                                     bz, 
                                     DrawMode::Rotate, 
@@ -1001,7 +1023,7 @@ impl Pending {
                             (path, pl.color, pl.width, pl.mid_point)
                         },
                         CanvasWidget::Polygon(pg) => {
-                            let path = 
+                            let (path, _degrees) = 
                                 build_polygon_path(
                                     pg, 
                                     DrawMode::Rotate, 
@@ -1055,6 +1077,7 @@ pub struct Bezier {
     pub mid_point: Point,
     pub color: Color,
     pub width: f32,
+    pub degrees: f32,
     pub draw_mode: DrawMode,
 }
 
@@ -1711,6 +1734,7 @@ fn rotate_geometry(widget: &mut CanvasWidget, theta: f32) -> CanvasWidget {
 // where (x, y) is the original point, (cx, cy) is the center of rotation, 
 //and θ is the rotation angle in radians. 
 fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
+    let theta = -theta;
     let mut new_points = vec![];
     for point in points.iter() {
         let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
@@ -1723,8 +1747,16 @@ fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
 }
 
 fn angle_of_vectors(center: Point, p1: Point, p2: Point, degrees: bool) -> f32 {
-    let angle = (p1.y - center.y).atan2(p1.x - center.x) -
-                    (p2.y - center.y).atan2(p2.x - center.x);
+    let t1 = translate_geometry(vec![center, p1], Point::default(), center)[1];
+    let t2 = translate_geometry(vec![center, p2], Point::default(), center)[1];
+    let mut angle = (t1.y).atan2(t1.x) -
+                    (t2.y).atan2(t2.x);
+
+    angle = angle * -1.0; // make it go clockwise
+    if angle < 0.0 {
+        angle = 2.0 * PI + angle;
+    };
+
     if degrees {
         angle*180.0/PI
     } else {
@@ -1742,8 +1774,8 @@ fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f3
         let y = mid_point.y + radius * (i as f32 * angle).cos();
         points.push(Point::new(x, y));
     }
-
-    let mut pts = rotate_widget(points.clone(), mid_point, degrees);
+    let theta = degrees * PI/180.0 * -1.0;
+    let mut pts = rotate_widget(points.clone(), mid_point, theta);
     pts.push(pts[0]);
     pts
 
@@ -1754,8 +1786,9 @@ fn build_bezier_path(bz: &Bezier,
                     pending_cursor: Option<Point>,
                     edit_point_index: Option<usize>, 
                     edit_mid_point: bool,
-                ) -> Path {
-    Path::new(|p| {
+                ) -> (Path, f32) {
+    let mut degrees = 0.0;
+    let path = Path::new(|p| {
         match draw_mode {
             DrawMode::DrawAll => {
                 p.move_to(bz.points[0]);
@@ -1792,6 +1825,10 @@ fn build_bezier_path(bz: &Bezier,
                     p.quadratic_curve_to(pending_cursor.unwrap(), bz.points[1]);
                 } else {
                     if bz.points.len() == 1 {
+                        let cursor = pending_cursor.unwrap();
+                        let p1 = Point{x: bz.mid_point.x, y:10.0};
+                        let p2 = cursor;
+                        degrees = angle_of_vectors(bz.mid_point, p1, p2, true);
                         p.move_to(bz.points[0]);
                         p.line_to(pending_cursor.unwrap());
                     }
@@ -1802,7 +1839,8 @@ fn build_bezier_path(bz: &Bezier,
                 p.quadratic_curve_to(bz.points[2], bz.points[1]);
             },
         }
-    })
+    });
+    (path, degrees)
 
 }
 
@@ -1974,8 +2012,9 @@ fn build_polygon_path(pg: &Polygon,
                         pending_cursor: Option<Point>,
                         edit_point_index: Option<usize>, 
                         edit_mid_point: bool,
-                    ) -> Path {
-    Path::new(|p| {
+                    ) -> (Path, f32) {
+    let mut degrees = 0.0;
+    let path = Path::new(|p| {
         match draw_mode {
             DrawMode::DrawAll => {
                 let points = &pg.points;
@@ -2027,8 +2066,8 @@ fn build_polygon_path(pg: &Polygon,
                 let cursor = pending_cursor.unwrap();
                 let p1 = Point{x: pg.mid_point.x, y:10.0};
                 let p2 = cursor;
-                let degrees = angle_of_vectors(pg.mid_point, p1, p2, true);
-                dbg!(&degrees);
+                degrees = angle_of_vectors(pg.mid_point, p1, p2, true);
+
                 let points = 
                     build_polygon(
                         pg.mid_point, 
@@ -2043,6 +2082,8 @@ fn build_polygon_path(pg: &Polygon,
                         p.line_to(*point);
                     }
                 }
+                p.move_to(pg.mid_point);
+                p.line_to(p2);
             },
             DrawMode::Rotate => {
                 for (index, point) in pg.points.iter().enumerate() {
@@ -2054,7 +2095,8 @@ fn build_polygon_path(pg: &Polygon,
                 }
             },
         }
-    })
+    });
+    (path, degrees)
 }
 
 fn build_right_triangle_path(tr: &RightTriangle, 

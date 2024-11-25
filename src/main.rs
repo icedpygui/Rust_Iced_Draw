@@ -105,6 +105,7 @@ impl Example {
                                     mid_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
+                                    degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
@@ -318,7 +319,7 @@ impl Example {
         let widths: Element<Message> = text(format!("widths = {}", 2.0)).into();
 
         let poly_pts_input: Element<Message> = 
-            text_input("Poly Points(4)", &self.state.selected_poly_points_str)
+            text_input("Poly Points(3)", &self.state.selected_poly_points_str)
             .on_input(Message::PolyInput)
             .into();
 
@@ -463,6 +464,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     mid_point: convert_to_point(&widget.mid_point),
                     color: convert_to_color(&widget.color),
                     width: widget.width,
+                    degrees: widget.rotation.unwrap(),
                     draw_mode: DrawMode::DrawAll,
                 };
                 vec_dc.push(DrawCurve {
