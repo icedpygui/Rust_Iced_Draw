@@ -133,6 +133,7 @@ impl Example {
                                     mid_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
+                                    degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
@@ -147,6 +148,7 @@ impl Example {
                                     mid_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
+                                    degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
@@ -176,6 +178,7 @@ impl Example {
                                     mid_point: Point::default(), 
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
+                                    degrees: 0.0,
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
@@ -492,6 +495,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     mid_point: convert_to_point(&widget.mid_point),
                     color: convert_to_color(&widget.color),
                     width: widget.width,
+                    degrees: widget.rotation.unwrap(),
                     draw_mode: DrawMode::DrawAll,
                 };
                 vec_dc.push(DrawCurve {
@@ -506,6 +510,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     mid_point: convert_to_point(&widget.mid_point),
                     color: convert_to_color(&widget.color),
                     width: widget.width,
+                    degrees: widget.rotation.unwrap(),
                     draw_mode: DrawMode::DrawAll,
                 };
                 vec_dc.push(DrawCurve {
@@ -535,6 +540,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     mid_point: convert_to_point(&widget.mid_point),
                     color: convert_to_color(&widget.color),
                     width: widget.width,
+                    degrees: widget.rotation.unwrap(),
                     draw_mode: DrawMode::DrawAll,
                 };
                 vec_dc.push(DrawCurve {
@@ -571,22 +577,22 @@ fn convert_to_export(curves: &Vec<DrawCurve>) -> Vec<ExportWidget> {
                     (Widget::None, &vec![], Point::default(), 0, Color::TRANSPARENT, 0.0, None)
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, 0, bz.color, bz.width, None)
+                    (Widget::Bezier, &bz.points, bz.mid_point, 0, bz.color, bz.width, Some(bz.degrees))
                 },
                 CanvasWidget::Circle(cir) => {
                     (Widget::Circle, &vec![cir.circle_point], cir.center, 0, cir.color, cir.width, None)
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, 0, ln.color, ln.width, None)
+                    (Widget::Line, &ln.points, ln.mid_point, 0, ln.color, ln.width, Some(ln.degrees))
                 },
                 CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.poly_points, pl.color, pl.width, None)
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.poly_points, pl.color, pl.width, Some(pl.degrees))
                 },
                 CanvasWidget::Polygon(pg) => {
                     (Widget::Polygon, &pg.points, pg.mid_point, pg.poly_points, pg.color, pg.width, Some(pg.degrees))
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, 3, tr.color, tr.width, None)
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, 3, tr.color, tr.width, Some(tr.degrees))
                 },
         };
 
