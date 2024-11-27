@@ -1608,14 +1608,12 @@ fn get_linear_regression(points: &Vec<Point>) -> (f32, f32) {
     let mut sx: f64 = 0.0;
     let mut sy: f64 = 0.0;
     let mut sxx: f64 = 0.0;
-    let mut syy: f64 = 0.0;
     let mut sxy: f64 = 0.0;
 
     for point in points.iter() {
         sx += point.x as f64;
         sy += point.y as f64;
         sxx += point.x as f64 * point.x as f64;
-        syy += point.y as f64 * point.y as f64;
         sxy += point.x as f64 * point.y as f64;
     }
 
@@ -1624,14 +1622,6 @@ fn get_linear_regression(points: &Vec<Point>) -> (f32, f32) {
 
     let alpha = (1.0/n * sy) - (beta*1.0/n*sx);
 
-    // let s_eps2 = 1.0/(n*(n-2.0)) * 
-    //             (n*syy - sy*sy - beta*beta*(
-    //             n*sxx - sx*sx));
-
-    // let s_beta2 = n*s_eps2/(n*sxx-sx*sx);
-
-    // let s_alpha2 = s_beta2*1.0/n*sxx;
-    
     (beta as f32, alpha as f32)
 
 }
@@ -1664,17 +1654,36 @@ pub fn get_mid_geometry(pts: &Vec<Point>, curve_type: Widget) -> Point {
             get_mid_point(pts[0], pts[1])
         },
         Widget::PolyLine => {
-            let index = (pts.len() as i32 / 2) as i32 as usize;
-            let (pt1, pt2) = if pts.len() % 2 == 0 {
-                (pts[index-1], pts[index])
-            } else {
-                
-                let mid1 = get_mid_point(pts[index-1], pts[index]);
-                let mid2 = get_mid_point(pts[index], pts[index+1]);
-                (mid1, mid2)
-            };
-              
-            get_mid_point(pt1, pt2)
+            let mut small_x = -1_000_000_f32;
+            let mut large_x = 0.0;
+            let mut small_y = -1_000_000_f32;
+            let mut large_y = 0.0;
+
+            for point in pts.iter() {
+                if point.x < small_x {
+                    small_x = point.x;
+                }
+                if point.x > large_x {
+                    large_x = point.x;
+                }
+                if point.y < small_y {
+                    small_y = point.y;
+                }
+                if point.y > large_y {
+                    large_y = point.y;
+                }
+            }
+
+            let (slope, intercept) = get_linear_regression(&pts);
+
+            let ys = slope*small_x + intercept;
+            let xs = ys/slope - intercept;
+
+            let yl = slope*large_x + intercept;
+            let xl = yl/slope - intercept;
+
+            get_mid_point(Point{x: xs, y: ys}, Point{x: xl, y: yl})
+
         },
         Widget::Polygon => {
             // return the center point
@@ -2007,7 +2016,6 @@ fn build_polyline_path(pl: &PolyLine,
                         edit_point_index: Option<usize>, 
                         edit_mid_point: bool,
                     ) -> (Path, f32, Point) {
-    
     let mut degrees = 0.0;
     let mut mid_point = pl.mid_point;
 
@@ -2062,7 +2070,6 @@ fn build_polyline_path(pl: &PolyLine,
                 p.line_to(pending_cursor.unwrap());
             },
             DrawMode::Rotate => {
-                let slope = get_linear_regression(&pl.points);
                 for (index, point) in pl.points.iter().enumerate() {
                     if index == 0 {
                         p.move_to(*point);
@@ -2314,8 +2321,6 @@ fn test_get_linear_regression() {
     Point::new(1.83, 74.46),
     ];
 
-    
-
     let (slope, intercept) = get_linear_regression(&points);
 
     assert_eq!(61.27219, slope);
@@ -2323,3 +2328,16 @@ fn test_get_linear_regression() {
 
 }
 
+#[test]
+fn temp_get_regress() {
+    let data = vec![Point { x: 168.53973, y: 417.17816 }, Point { x: 202.54492, y: 287.3223 }, Point { x: 376.13135, y: 436.23273 }, Point { x: 449.2948, y: 278.5411 }, Point { x: 561.322, y: 396.79346 }, Point { x: 604.73645, y: 226.95679 }, Point { x: 593.27747, y: 474.0506 }, Point { x: 305.3615, y: 322.9846 }];
+
+    let mid_point = Point { x: 505.3084, y: 337.6673 };
+
+    let (slope, intercept) = get_linear_regression(&data);
+
+    dbg!(slope, intercept);
+
+    // slope = -0.00081245444
+    // intercept = 355.33865
+}
