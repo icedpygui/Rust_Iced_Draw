@@ -250,22 +250,23 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                 self.state.selected_widget.clone(), 
                                                 self.state.selected_poly_points,
                                                 self.state.selected_color,
-                                                2.0,
+                                                self.state.draw_width,
                                                 self.state.draw_mode,
                                             );
                                         let (widget, _) = set_widget_point(&selected_widget, cursor_position);
-                                        *program_state = Some(Pending::N {
+                                        *program_state = Some(Pending::New {
                                             widget,
                                         });
                                         None
                                     },
                                     // The second click is a Some() since it was created above
                                     // The pending is carrying the previous info
-                                    Some(Pending::N { 
+                                    Some(Pending::New { 
                                             widget, 
                                     }) => {
 
-                                        let (widget, completed) = set_widget_point(widget, cursor_position);
+                                        let (widget, completed) = 
+                                            set_widget_point(widget, cursor_position);
                                         
                                         // if completed, we return the Curve and set the state to none
                                         // if not, then this is repeated until completed.
@@ -276,15 +277,16 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     None
                                                 },
                                                 CanvasWidget::Bezier(mut bz) => {
+                                                    bz.mid_point = get_mid_point(bz.points[0], bz.points[1]);
                                                     let p1 = Point{x: bz.mid_point.x, y: 10.0};
-                                                    let degrees = 
+                                                    dbg!("end of new1", bz.degrees);
+                                                    bz.degrees = 
                                                         angle_of_vectors(
                                                             bz.mid_point, 
                                                             p1, 
                                                             cursor_position, 
                                                             true);
-
-                                                    bz.degrees = degrees;
+                                                    dbg!("end of new2", &bz.degrees);
                                                     Some(DrawCurve {
                                                         widget: CanvasWidget::Bezier(bz),
                                                         edit_curve_index: None,
@@ -312,7 +314,30 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                         edit_curve_index: None,
                                                     })
                                                 },
-                                                CanvasWidget::PolyLine(pl) => {
+                                                CanvasWidget::PolyLine(mut pl) => {
+                                                    pl.mid_point = 
+                                                        get_mid_geometry(
+                                                            &pl.points, 
+                                                            Widget::PolyLine,
+                                                        );
+                                                    let (slope, intercept) =
+                                                        get_linear_regression(&pl.points);
+                                                    
+                                                    let line = 
+                                                        get_line_from_slope_intercept(
+                                                            &pl.points, 
+                                                            slope, 
+                                                            intercept
+                                                        );
+                                                    
+                                                    pl.degrees = 
+                                                        angle_of_vectors(
+                                                            pl.mid_point, 
+                                                            Point::new(pl.mid_point.x, 10.0),
+                                                            line.1, 
+                                                            true,
+                                                        );
+
                                                     Some(DrawCurve{
                                                         widget: CanvasWidget::PolyLine(pl),
                                                         edit_curve_index: None,
@@ -350,7 +375,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             }
                                             
                                         } else {
-                                            *program_state = Some(Pending::N {
+                                            *program_state = Some(Pending::New {
                                                 widget,
                                             });
                                             None
@@ -380,12 +405,13 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
 
                                             let selected_widget = self.curves[index.unwrap()].widget.clone();
                                             let degrees = get_widget_degrees(&selected_widget);
+                                            dbg!("in", &degrees);
                                             *program_state = Some(Pending::Rotate {
                                                 widget: selected_widget,
                                                 edit_curve_index: index,
-                                                step_count: 0.0,
                                                 degrees,
                                             });
+                                            dbg!("out", &degrees);
                                             // returning DrawCurve so that the curve
                                             // being editied will not show after the refresh
                                             // The pending process will show the curve
@@ -412,7 +438,6 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     Some(Pending::Rotate {
                                         widget,
                                         edit_curve_index,
-                                        step_count:_,
                                         degrees,
                                     }) => {
 
@@ -435,7 +460,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                             },
                         }
                     },
-                    mouse::Event::WheelScrolled { delta } => {
+                    mouse::Event::WheelScrolled { delta} => {
                         match self.state.draw_mode {
                             DrawMode::Rotate => {
                                 match program_state {
@@ -444,18 +469,16 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     Some(Pending::Rotate { 
                                         widget,
                                         edit_curve_index,
-                                        step_count,
-                                        degrees:_,   
+                                        degrees,   
                                     }) => {
-
+                                        dbg!(&degrees);
                                         let delta = match delta {
                                             mouse::ScrollDelta::Lines { x:_, y } => y,
                                             mouse::ScrollDelta::Pixels { x:_, y } => y,
                                         };
-                                        let step = 360.0/60.0;
-                                        let step_count = *step_count + delta;
-                                        let theta: f32 = PI/180.0 * step * delta;
-                                        let mut degrees = step_count * step;
+
+                                        let step: f32 = 360.0/60.0 * delta;
+                                        let mut degrees = degrees.unwrap() + step;
                                         
                                         degrees = degrees % 360.0;
 
@@ -469,13 +492,9 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             degrees
                                         };
 
-                                        let widget = 
-                                            rotate_geometry(widget, theta);
-                                        
                                         *program_state = Some(Pending::Rotate{
-                                            widget,
+                                            widget: widget.clone(),
                                             edit_curve_index: *edit_curve_index,
-                                            step_count,
                                             degrees: Some(degrees),
                                         });
                                         None
@@ -568,7 +587,9 @@ impl DrawCurve {
                                 bz.draw_mode, 
                                 None, 
                                 None, 
-                                false);
+                                false,
+                                None,
+                            );
 
                             (Some(path), Some(bz.color), Some(bz.width))
                         }
@@ -676,7 +697,7 @@ impl DrawCurve {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum Pending {
-    N {
+    New {
         widget: CanvasWidget, 
     },
     EditSecond {
@@ -694,7 +715,6 @@ enum Pending {
     Rotate {
         widget: CanvasWidget,
         edit_curve_index: Option<usize>,
-        step_count: f32,
         degrees: Option<f32>,
     },
 }
@@ -713,7 +733,7 @@ impl Pending {
         if let Some(cursor) = cursor.position_in(bounds) {
             // This draw happens when the mouse is moved and the state is none.
             match self {
-                Pending::N { 
+                Pending::New { 
                     widget, 
                 } => {
                     let (path, color, width, degrees, mid_point) = match widget {
@@ -725,6 +745,7 @@ impl Pending {
                                     Some(cursor),
                                     None,
                                     false,
+                                    None,
                                 );
                                 
                             (path, bz.color, bz.width, Some(degrees), Some(bz.points[0]))
@@ -792,7 +813,7 @@ impl Pending {
                     if degrees.is_some() {
                         let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
                         let mid_point = mid_point.unwrap();
-                        let position = Point::new(mid_point.x-10.0, mid_point.y-10.0);
+                        let position = Point::new(mid_point.x-10.0, mid_point.y-20.0);
                         frame.fill_text(canvas::Text {
                             position: position,
                             color: Color::WHITE,
@@ -833,6 +854,7 @@ impl Pending {
                                     Some(cursor),
                                     *edit_point_index, 
                                     *edit_mid_point,
+                                    None,
                                 );
                            
                             (path, bz.color, bz.width, Some(degrees), mid_point)
@@ -898,7 +920,7 @@ impl Pending {
                     if degrees.is_some() {
                         let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
                         let mid_point = mid_point;
-                        let position = Point::new(mid_point.x-10.0, mid_point.y-10.0);
+                        let position = Point::new(mid_point.x-10.0, mid_point.y-20.0);
                         frame.fill_text(canvas::Text {
                             position: position,
                             color: Color::WHITE,
@@ -919,7 +941,6 @@ impl Pending {
                 Pending::Rotate {
                     widget,
                     edit_curve_index: _,
-                    step_count: _,
                     degrees, 
                 } => {
                     let (path, color, width, mid_point) = match widget {
@@ -931,6 +952,7 @@ impl Pending {
                                     None,
                                     None, 
                                     false,
+                                    *degrees,
                                 );
                             (path, bz.color, bz.width, bz.mid_point)
                         },
@@ -996,7 +1018,7 @@ impl Pending {
 
                     if degrees.is_some() {
                         let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
-                        let position = Point::new(mid_point.x-5.0, mid_point.y-5.0);
+                        let position = Point::new(mid_point.x-10.0, mid_point.y-20.0);
 
                         frame.fill_text(canvas::Text {
                             position: position,
@@ -1249,12 +1271,20 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
     match widget {
         CanvasWidget::None => (CanvasWidget::None, true),
         CanvasWidget::Bezier(bezier) => {
+
             let mut bz = bezier.clone();
             bz.points.push(cursor);
-            let p1 = Point{x: bz.mid_point.x, y: 10.0};
-            bz.degrees = angle_of_vectors(bz.mid_point, p1, cursor, true);
+
+            if bz.points.len() > 1 {
+                bz.mid_point = get_mid_point(bz.points[0], bz.points[1]);
+            }
+            
+            if bz.points.len() == 2 {
+                let p1 = Point{x: bz.mid_point.x, y: 10.0};
+                bz.degrees = angle_of_vectors(bz.mid_point, p1, bz.points[1], true);
+            }
             let finished = if bz.points.len() == 3 {
-                bz.mid_point = get_mid_geometry(&bz.points, Widget::Bezier);
+                // degrees won't change with this last point
                 bz.draw_mode = DrawMode::DrawAll;
                 true
             } else {
@@ -1359,6 +1389,7 @@ fn edit_widget_points(widget: CanvasWidget,
             CanvasWidget::None
         },
         CanvasWidget::Bezier(mut bz) => {
+            dbg!("at edit widget", &bz.degrees);
             if index.is_some() {
                 bz.points[index.unwrap()] = cursor;
                 bz.mid_point = get_mid_geometry(&bz.points, Widget::Bezier);
@@ -1619,7 +1650,6 @@ fn get_linear_regression(points: &Vec<Point>) -> (f32, f32) {
 
     let n = points.len() as f64;
     let beta = (n*sxy-sx*sy) / (n*sxx - sx*sx);
-
     let alpha = (1.0/n * sy) - (beta*1.0/n*sx);
 
     (beta as f32, alpha as f32)
@@ -1642,9 +1672,7 @@ pub fn get_mid_geometry(pts: &Vec<Point>, curve_type: Widget) -> Point {
 
     match curve_type {
         Widget::Bezier => {
-            let x = (pts[0].x + pts[1].x + pts[2].x)/3.0;
-            let y = (pts[0].y + pts[1].y + pts[2].y)/3.0;
-            Point {x, y}
+            get_mid_point(pts[0], pts[1])
         },
         Widget::Circle => {
             // return the center point
@@ -1654,35 +1682,12 @@ pub fn get_mid_geometry(pts: &Vec<Point>, curve_type: Widget) -> Point {
             get_mid_point(pts[0], pts[1])
         },
         Widget::PolyLine => {
-            let mut small_x = -1_000_000_f32;
-            let mut large_x = 0.0;
-            let mut small_y = -1_000_000_f32;
-            let mut large_y = 0.0;
-
-            for point in pts.iter() {
-                if point.x < small_x {
-                    small_x = point.x;
-                }
-                if point.x > large_x {
-                    large_x = point.x;
-                }
-                if point.y < small_y {
-                    small_y = point.y;
-                }
-                if point.y > large_y {
-                    large_y = point.y;
-                }
-            }
 
             let (slope, intercept) = get_linear_regression(&pts);
 
-            let ys = slope*small_x + intercept;
-            let xs = ys/slope - intercept;
+            let (p1, p2) = get_line_from_slope_intercept(&pts, slope, intercept);
 
-            let yl = slope*large_x + intercept;
-            let xl = yl/slope - intercept;
-
-            get_mid_point(Point{x: xs, y: ys}, Point{x: xl, y: yl})
+            get_mid_point(p1, p2)
 
         },
         Widget::Polygon => {
@@ -1697,6 +1702,38 @@ pub fn get_mid_geometry(pts: &Vec<Point>, curve_type: Widget) -> Point {
         Widget::None => Point::default(),
     }
     
+}
+
+fn get_line_from_slope_intercept(points: &Vec<Point>, 
+                                slope: f32, 
+                                intercept: f32,
+                                ) -> (Point, Point) {
+
+    let mut small_x = 1_000_000_f32;
+    let mut large_x = 0.0;
+    let mut small_y = 1_000_000_f32;
+    let mut large_y = 0.0;
+
+    for point in points.iter() {
+        if point.x < small_x {
+            small_x = point.x;
+        }
+        if point.x > large_x {
+            large_x = point.x;
+        }
+        if point.y < small_y {
+            small_y = point.y;
+        }
+        if point.y > large_y {
+            large_y = point.y;
+        }
+    }
+ 
+    let ys = slope*small_x + intercept;
+    let yl = slope*large_x + intercept; 
+    
+    (Point{x: small_x, y: ys}, Point{x: large_x, y: yl})  
+
 }
 
 fn translate_geometry(pts: Vec<Point>, 
@@ -1714,42 +1751,28 @@ fn translate_geometry(pts: Vec<Point>,
     new_pts
 }
 
-fn rotate_geometry(widget: &mut CanvasWidget, theta: f32) -> CanvasWidget {
-
+fn rotate_geometry(points: &Vec<Point>, mid_point: &Point, degrees: &f32, widget: Widget) -> Vec<Point> {
     match widget {
-        CanvasWidget::None => CanvasWidget::None,
-        CanvasWidget::Bezier(bz) => {
-            let mut bz = bz.clone();
-            bz.points = rotate_widget(bz.points, bz.mid_point, theta);
-            CanvasWidget::Bezier(bz.clone())
+        Widget::None => vec![],
+        Widget::Bezier => {
+            rotate_widget(points, mid_point, degrees)
         },
-        CanvasWidget::Circle(cir) => {
-            let mut cir = cir.clone();
-            cir.circle_point = rotate_widget(vec![cir.circle_point], cir.center, theta)[0];
-            CanvasWidget::Circle(cir.clone())
+        Widget::Circle => {
+            rotate_widget(points, mid_point, degrees)
         },
-        CanvasWidget::Line(line) => {
-            let mut line = line.clone();
-            line.points = rotate_widget(line.points, line.mid_point, theta);
-            CanvasWidget::Line(line.clone())
+        Widget::Line => {
+            rotate_widget(points, mid_point, degrees)
         },
-        CanvasWidget::PolyLine(pl) => {
-            let mut pl = pl.clone();
-            pl.points = rotate_widget(pl.points, pl.mid_point, theta);
-            CanvasWidget::PolyLine(pl.clone())
+        Widget::PolyLine => {
+            rotate_widget(points, mid_point, degrees)
         },
-        CanvasWidget::Polygon(pg) => {
-            let mut pg = pg.clone();
-            pg.points = rotate_widget(pg.points, pg.mid_point, theta);
-            CanvasWidget::Polygon(pg.clone())
+        Widget::Polygon => {
+            rotate_widget(points, mid_point, degrees)
         },
-        CanvasWidget::RightTriangle(tr) => {
-            let mut tr = tr.clone();
-            tr.points = rotate_widget(tr.points, tr.mid_point, theta);
-            CanvasWidget::RightTriangle(tr)
+        Widget::RightTriangle => {
+            rotate_widget(points, mid_point, degrees)
         },
     }
-
 }
 
 // To rotate a point (x, y) around a center point (cx, cy) by an angle θ, 
@@ -1758,8 +1781,8 @@ fn rotate_geometry(widget: &mut CanvasWidget, theta: f32) -> CanvasWidget {
 // y' = (x - cx) * sin(θ) + (y - cy) * cos(θ) + cy; 
 // where (x, y) is the original point, (cx, cy) is the center of rotation, 
 //and θ is the rotation angle in radians. 
-fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
-    let theta = -theta;
+fn rotate_widget(points: &Vec<Point>, center: &Point, degrees: &f32) -> Vec<Point> {
+    let theta = PI/180.0 * degrees;
     let mut new_points = vec![];
     for point in points.iter() {
         let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
@@ -1774,10 +1797,9 @@ fn rotate_widget(points: Vec<Point>, center: Point, theta: f32) -> Vec<Point> {
 fn angle_of_vectors(center: Point, p1: Point, p2: Point, degrees: bool) -> f32 {
     let t1 = translate_geometry(vec![center, p1], Point::default(), center)[1];
     let t2 = translate_geometry(vec![center, p2], Point::default(), center)[1];
-    let mut angle = (t1.y).atan2(t1.x) -
-                    (t2.y).atan2(t2.x);
-
-    angle = angle * -1.0; // make it go clockwise
+    let mut angle = (t2.y).atan2(t2.x) -
+                    (t1.y).atan2(t1.x);
+    dbg!("at angle", angle);
     if angle < 0.0 {
         angle = 2.0 * PI + angle;
     };
@@ -1799,8 +1821,8 @@ fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f3
         let y = mid_point.y + radius * (i as f32 * angle).cos();
         points.push(Point::new(x, y));
     }
-    let theta = degrees * PI/180.0 * -1.0;
-    let mut pts = rotate_widget(points.clone(), mid_point, theta);
+    
+    let mut pts = rotate_widget(&points, &mid_point, &degrees);
     pts.push(pts[0]);
     pts
 
@@ -1811,10 +1833,15 @@ fn build_bezier_path(bz: &Bezier,
                     pending_cursor: Option<Point>,
                     edit_point_index: Option<usize>, 
                     edit_mid_point: bool,
+                    degrees: Option<f32>,
                     ) -> (Path, f32, Point) {
 
+    let mut degrees = if degrees.is_some() {
+        degrees.unwrap()
+    } else {
+        bz.degrees
+    };
     let mut mid_point = bz.mid_point;
-    let mut degrees = 0.0;
     let path = Path::new(|p| {
 
         match draw_mode {
@@ -1842,7 +1869,7 @@ fn build_bezier_path(bz: &Bezier,
                                 bz.mid_point, 
                                 bz.points[0], 
                                 pending_cursor.unwrap(), 
-                                true
+                                true,
                             );
                             
                     } else {
@@ -1859,24 +1886,35 @@ fn build_bezier_path(bz: &Bezier,
                 p.circle(mid_point, 3.0);
             },
             DrawMode::New => {
-                let p1 = Point{x: bz.points[0].x, y:10.0};
+                if bz.points.len() == 1 {
+                    mid_point = 
+                        get_mid_point(
+                            bz.points[0], 
+                            pending_cursor.unwrap()
+                        );
+                    let p1 = Point{x: mid_point.x, y:10.0};
+                    degrees = 
+                        angle_of_vectors(
+                            mid_point, 
+                            p1, 
+                            pending_cursor.unwrap(), 
+                            true
+                        );
+                    p.move_to(bz.points[0]);
+                    p.line_to(pending_cursor.unwrap());
+                }
                 if bz.points.len() == 2 {
                     p.move_to(bz.points[0]);
                     p.quadratic_curve_to(pending_cursor.unwrap(), bz.points[1]);
-                    degrees = angle_of_vectors(bz.points[0], p1, bz.points[1], true);
-                } else {
-                    if bz.points.len() == 1 {
-                        let cursor = pending_cursor.unwrap();
-                        let p2 = cursor;
-                        degrees = angle_of_vectors(bz.points[0], p1, p2, true);
-                        p.move_to(bz.points[0]);
-                        p.line_to(pending_cursor.unwrap());
-                    }
                 }
             },
             DrawMode::Rotate => {
-                p.move_to(bz.points[0]);
-                p.quadratic_curve_to(bz.points[2], bz.points[1]);
+                let points = rotate_geometry(&bz.points, &bz.mid_point, &degrees, Widget::Bezier);
+                p.move_to(points[0]);
+                p.quadratic_curve_to(points[2], points[1]);
+                p.move_to(points[0]);
+                p.line_to(points[1]);
+                p.circle(bz.mid_point, 3.0);
             },
         }
     });
@@ -2016,6 +2054,7 @@ fn build_polyline_path(pl: &PolyLine,
                         edit_point_index: Option<usize>, 
                         edit_mid_point: bool,
                     ) -> (Path, f32, Point) {
+
     let mut degrees = 0.0;
     let mut mid_point = pl.mid_point;
 
@@ -2077,6 +2116,12 @@ fn build_polyline_path(pl: &PolyLine,
                         p.line_to(*point);
                     }
                 }
+                let (slope, intercept) = get_linear_regression(&pl.points);
+                let(p1, p2) = get_line_from_slope_intercept(&pl.points, slope, intercept);
+                mid_point = get_mid_point(p1, p2);
+                p.move_to(p1);
+                p.line_to(p2);
+                p.circle(mid_point, 3.0);
             },
         }
     });
@@ -2173,6 +2218,9 @@ fn build_polygon_path(pg: &Polygon,
                         p.line_to(*point);
                     }
                 }
+                p.move_to(pg.mid_point);
+                p.line_to(pg.points[2]);
+                p.circle(pg.mid_point, 3.0);
             },
         }
     });
@@ -2326,6 +2374,14 @@ fn test_get_linear_regression() {
     assert_eq!(61.27219, slope);
     assert_eq!(-39.06196, intercept);
 
+}
+
+#[test]
+fn test_get_line_from_slope_intercept() {
+    let points = vec![Point::new(0.0, 100.0), Point::new(30.0, 30.0), Point::new(25.0, 50.0)];
+    let (slope, intercept) = get_linear_regression(&points);
+    let line_points = get_line_from_slope_intercept(&points, slope, intercept);
+    println!("{:?} {:?}, {:?}",slope, intercept, line_points );
 }
 
 #[test]
