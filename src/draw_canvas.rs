@@ -63,6 +63,7 @@ pub struct State {
     pub selected_color_str: Option<String>,
     pub selected_poly_points: usize,
     pub selected_poly_points_str: String,
+    pub selected_step_degrees: f32,
 }
 
 impl Default for State {
@@ -79,6 +80,7 @@ impl Default for State {
                 selected_color_str: None,
                 selected_poly_points: 3,
                 selected_poly_points_str: "".to_string(),
+                selected_step_degrees: 6.0,
              }
         }
 }
@@ -169,7 +171,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             let widget = self.curves[index.unwrap()].widget.clone();
                                             
                                             let new_widget = 
-                                                update_draw_mode(
+                                                set_widget_draw_mode(
                                                     widget, 
                                                     self.state.draw_mode,
                                                 );
@@ -224,7 +226,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     *edit_mid_point
                                                 );
                                         new_widget = 
-                                            update_draw_mode(
+                                            set_widget_draw_mode(
                                                 new_widget, 
                                                 DrawMode::DrawAll,
                                             );
@@ -293,7 +295,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     // degree is angle rotation around mid point 
                                                     let degrees = 
                                                         get_angle_of_vectors(
-                                                            ln.points[0], 
+                                                            ln.points[0],
                                                             ln.points[1], 
                                                         );
                                                     ln.degrees = degrees;
@@ -316,7 +318,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     pl.mid_point = get_mid_point(line.0, line.1);
                                                     pl.degrees = 
                                                         get_angle_of_vectors(
-                                                            pl.mid_point, 
+                                                            pl.mid_point,
                                                             line.1,
                                                         );
 
@@ -385,47 +387,54 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         if index.is_some() {
 
                                             let selected_widget = self.curves[index.unwrap()].widget.clone();
-                                            let degrees = get_widget_degrees(&selected_widget);
 
+                                            // The widget needs to be in DrawAll initially, 
+                                            // in order to display it in pending
+                                            // However, the below return of the draw curve 
+                                            // the widget need to ne in the rotate method.
+                                            let widget = 
+                                                set_widget_draw_mode(
+                                                    selected_widget, 
+                                                    DrawMode::Rotate,
+                                                );
+                                            
                                             *program_state = Some(Pending::Rotate {
-                                                widget: selected_widget,
+                                                widget: widget.clone(),
                                                 edit_curve_index: index,
-                                                degrees,
+                                                step_degrees: self.state.selected_step_degrees,
+                                                degrees: get_widget_degrees(&widget),
                                             });
 
                                             // returning DrawCurve so that the curve
                                             // being editied will not show after the refresh
                                             // The pending process will show the curve
                                             // until its finsihed.
-
-                                            // update the curve to indicate that
-                                            // it is in rotation mode.
-                                            let widget = self.curves[index.unwrap()].widget.clone();
-                                            
-                                            let new_widget = 
-                                                update_draw_mode(
-                                                    widget, 
-                                                    self.state.draw_mode,
-                                                );
-
+                                            // let widget = 
+                                            //     set_widget_draw_mode(
+                                            //         widget, 
+                                            //         DrawMode::Rotate,
+                                            //     );
                                             Some(DrawCurve {
-                                                widget: new_widget,
+                                                widget,
                                                 edit_curve_index: index,
                                             })
                                         } else {
                                             None
                                         }
                                     },
+                                    // After the final rotation completed
                                     Some(Pending::Rotate {
                                         widget,
                                         edit_curve_index,
+                                        step_degrees: _,
                                         degrees,
                                     }) => {
-
                                         let rotated_widget = 
                                             update_rotated_widget(
                                                 widget,
-                                                *degrees,
+                                                degrees.unwrap(),
+                                                0.0,
+                                                DrawMode::DrawAll,
                                             );
 
                                         let edit_curve_index = *edit_curve_index;
@@ -451,31 +460,28 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     Some(Pending::Rotate { 
                                         widget,
                                         edit_curve_index,
-                                        degrees,   
+                                        step_degrees,
+                                        degrees,  
                                     }) => {
                                         let delta = match delta {
                                             mouse::ScrollDelta::Lines { x:_, y } => y,
                                             mouse::ScrollDelta::Pixels { x:_, y } => y,
                                         };
-
-                                        let step: f32 = 360.0/60.0 * delta;
-                                        let mut degrees = degrees.unwrap() + step;
+                                        
+                                        let mut degrees = degrees.unwrap() + *step_degrees * delta;
                                         
                                         degrees %= 360.0;
 
-                                        degrees = if degrees <= 0.0 {
-                                            let mut degs = 360.0 + degrees;
-                                            if degs == 360.0 {
-                                                degs = 0.0;
-                                            }
-                                            degs
-                                        } else {
-                                            degrees
-                                        };
-
+                                        // Setting the widget draw_mode at each mouse wheel
+                                        // since it was set to DrawAll initially.
+                                        // Otherwise needed to have another pending type
+                                        // and duplicate a lot of code.  Had to clone anyway.
+                                        
+                                        let widget = update_rotated_widget(widget, degrees, *step_degrees*delta, DrawMode::Rotate);
                                         *program_state = Some(Pending::Rotate{
-                                            widget: widget.clone(),
+                                            widget,
                                             edit_curve_index: *edit_curve_index,
+                                            step_degrees: *step_degrees,
                                             degrees: Some(degrees),
                                         });
                                         None
@@ -694,6 +700,7 @@ enum Pending {
     Rotate {
         widget: CanvasWidget,
         edit_curve_index: Option<usize>,
+        step_degrees: f32,
         degrees: Option<f32>,
     },
 }
@@ -919,20 +926,21 @@ impl Pending {
                 Pending::Rotate {
                     widget,
                     edit_curve_index: _,
+                    step_degrees: _,
                     degrees, 
                 } => {
-                    let (path, color, width, mid_point) = match widget {
+                    let (path, color, width, mid_point, pending_degrees) = match widget {
                         CanvasWidget::Bezier(bz) => {
-                            let (path, _, _) = 
+                            let (path, pending_degrees, _) = 
                                 build_bezier_path(
                                     bz, 
-                                    DrawMode::Rotate, 
+                                    bz.draw_mode,
                                     None,
                                     None, 
                                     false,
                                     *degrees,
                                 );
-                            (path, bz.color, bz.width, bz.mid_point)
+                            (path, bz.color, bz.width, bz.mid_point, Some(pending_degrees))
                         },
                         CanvasWidget::Circle(cir) => {
                         let path = 
@@ -943,7 +951,7 @@ impl Pending {
                                 None,
                                 false,
                             );
-                            (path, cir.color, cir.width, cir.center)
+                            (path, cir.color, cir.width, cir.center, None)
                         },
                             CanvasWidget::Line(line) => {
                             let (path, _, _) = 
@@ -954,7 +962,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, line.color, line.width, line.mid_point)
+                            (path, line.color, line.width, line.mid_point, None)
                         },
                         CanvasWidget::PolyLine(pl) => {
                             let (path, _, _) = 
@@ -965,7 +973,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, pl.color, pl.width, pl.mid_point)
+                            (path, pl.color, pl.width, pl.mid_point, None)
                         },
                         CanvasWidget::Polygon(pg) => {
                             let (path, _, _) = 
@@ -976,7 +984,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, pg.color, pg.width, pg.mid_point)
+                            (path, pg.color, pg.width, pg.mid_point, None)
                         },
                         CanvasWidget::RightTriangle(tr) => {
                             let (path, _, _) = 
@@ -987,15 +995,15 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                            (path, tr.color, tr.width, tr.mid_point)
+                            (path, tr.color, tr.width, tr.mid_point, None)
                         },
                         CanvasWidget::None => {
-                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default())
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None)
                         }
                     };
 
-                    if degrees.is_some() {
-                        let degrees = format!("{:.prec$}", degrees.unwrap(), prec = 1);
+                    if pending_degrees.is_some() {
+                        let degrees = format!("{:.prec$}", pending_degrees.unwrap(), prec = 1);
                         let position = Point::new(mid_point.x-10.0, mid_point.y-20.0);
 
                         frame.fill_text(canvas::Text {
@@ -1172,15 +1180,17 @@ fn update_widget(widget: CanvasWidget,
     }
 }
 
-fn update_rotated_widget(widget: &mut CanvasWidget, 
-                        degrees: Option<f32>,
+fn update_rotated_widget(widget: &mut CanvasWidget,
+                        degrees: f32, 
+                        step_degrees: f32,
+                        draw_mode: DrawMode,
                     ) -> CanvasWidget {
     match widget {
         CanvasWidget::None => CanvasWidget::None,
         CanvasWidget::Bezier(bz) => {
-            bz.draw_mode = DrawMode::DrawAll;
-            bz.degrees = degrees.unwrap();
-            bz.points = rotate_geometry(&bz.points, &bz.mid_point, &bz.degrees, Widget::Bezier);
+            bz.draw_mode = draw_mode;
+            bz.degrees = degrees;
+            bz.points = rotate_geometry(&bz.points, &bz.mid_point, &step_degrees, Widget::Bezier);
             CanvasWidget::Bezier(bz.clone())
         },
         CanvasWidget::Circle(cir) => {
@@ -1189,32 +1199,28 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
         },
         CanvasWidget::Line(ln) => {
             ln.draw_mode = DrawMode::DrawAll;
-            ln.degrees = degrees.unwrap();
-            ln.points = rotate_geometry(&ln.points, &ln.mid_point, &ln.degrees, Widget::Line);
+            ln.degrees = degrees;
             CanvasWidget::Line(ln.clone())
         },
         CanvasWidget::PolyLine(pl) => {
             pl.draw_mode = DrawMode::DrawAll;
-            pl.degrees = degrees.unwrap();
-            pl.points = rotate_geometry(&pl.points, &pl.mid_point, &pl.degrees, Widget::PolyLine);
+            pl.degrees = degrees;
             CanvasWidget::PolyLine(pl.clone())
         },
         CanvasWidget::Polygon(pg) => {
             pg.draw_mode = DrawMode::DrawAll;
-            pg.degrees = degrees.unwrap();
-            pg.points = rotate_geometry(&pg.points, &pg.mid_point, &pg.degrees, Widget::Polygon);
+            pg.degrees = degrees;
             CanvasWidget::Polygon(pg.clone())
         },
         CanvasWidget::RightTriangle(tr) => {
             tr.draw_mode = DrawMode::DrawAll;
-            tr.degrees = degrees.unwrap();
-            tr.points = rotate_geometry(&tr.points, &tr.mid_point, &tr.degrees, Widget::RightTriangle);
+            tr.degrees = degrees;
             CanvasWidget::RightTriangle(tr.clone())
         },
     }
 }
 
-fn update_draw_mode(widget: CanvasWidget, 
+fn set_widget_draw_mode(widget: CanvasWidget, 
                     draw_mode: DrawMode,
                     ) -> CanvasWidget {
     match widget {
@@ -1640,6 +1646,18 @@ fn get_widget_degrees(widget: &CanvasWidget) -> Option<f32> {
     }
 }
 
+fn get_widget_points(widget: &CanvasWidget) -> (Vec<Point>, Point, Widget) {
+    match widget {
+        CanvasWidget::None => (vec![], Point::default(), Widget::None),
+        CanvasWidget::Bezier(bz) => (bz.points.clone(), bz.mid_point, Widget::Bezier),
+        CanvasWidget::Circle(_) => (vec![], Point::default(), Widget::Circle),
+        CanvasWidget::Line(ln) => (ln.points.clone(), ln.mid_point, Widget::Line),
+        CanvasWidget::PolyLine(pl) => (pl.points.clone(), pl.mid_point, Widget::PolyLine),
+        CanvasWidget::Polygon(pg) => (pg.points.clone(), pg.mid_point, Widget::Polygon),
+        CanvasWidget::RightTriangle(tr) => (tr.points.clone(), tr.mid_point, Widget::RightTriangle),
+    }
+}
+
 pub fn get_mid_geometry(pts: &[Point], curve_type: Widget) -> Point {
 
     match curve_type {
@@ -1728,7 +1746,6 @@ fn rotate_geometry(points: &[Point], mid_point: &Point, degrees: &f32, widget: W
     match widget {
         Widget::None => vec![],
         Widget::Bezier => {
-            let degrees = degrees -90.0;
             rotate_widget(points, mid_point, &degrees)
         },
         Widget::Circle => {
@@ -1749,15 +1766,9 @@ fn rotate_geometry(points: &[Point], mid_point: &Point, degrees: &f32, widget: W
     }
 }
 
-// To rotate a point (x, y) around a center point (cx, cy) by an angle θ, 
-// the formula for the rotated coordinates (x', y') is: 
-// x' = (x - cx) * cos(θ) - (y - cy) * sin(θ) + cx and 
-// y' = (x - cx) * sin(θ) + (y - cy) * cos(θ) + cy; 
-// where (x, y) is the original point, (cx, cy) is the center of rotation, 
-//and θ is the rotation angle in radians. 
+// Rotates a widget by the given angle by an additive method, not to an absolute angle.
 fn rotate_widget(points: &[Point], center: &Point, degrees: &f32) -> Vec<Point> {
-    let theta = PI/180.0 * degrees;
-    dbg!(&theta);
+    let theta = to_radians(degrees);
     let mut new_points = vec![];
     for point in points.iter() {
         let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
@@ -1771,20 +1782,28 @@ fn rotate_widget(points: &[Point], center: &Point, degrees: &f32) -> Vec<Point> 
 
 // The first point is used to create a vertical vector and is used as the center
 fn get_angle_of_vectors(center: Point, p2: Point) -> f32 {
-    let p_vertical = Point::new(center.x, 10.0);
-    
-    let t1 = translate_geometry(vec![center, p_vertical], Point::default(), center)[1];
-    let t2 = translate_geometry(vec![center, p2], Point::default(), center)[1];
-    let mut angle = (t2.y).atan2(t2.x) -
-                    (t1.y).atan2(t1.x);
+    let p1 = Point::new(center.x, 10.0);
+    let pts = translate_geometry(vec![p1, p2], Point::default(), center);
 
-    if angle < 0.0 {
-        angle += 2.0 * PI;
+    let mut angle = (pts[0].y).atan2(pts[0].x) -
+                        (pts[1].y).atan2(pts[1].x);
+    angle += PI;
+    // Since beyond pi, angle goes negative
+    let new_angle = if angle < 0.0 {
+        2.0 * PI + angle
+    } else {
+        angle
     };
 
-    // return degrees
-    angle*180.0/PI
-    
+    to_degrees(&new_angle)
+}
+
+fn to_degrees(radians: &f32) -> f32 {
+    radians * 180.0/PI
+}
+
+fn to_radians(degrees: &f32) -> f32 {
+    degrees * PI/180.0
 }
 
 fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f32) -> Vec<Point> {
@@ -1877,17 +1896,10 @@ fn build_bezier_path(bz: &Bezier,
                 }
             },
             DrawMode::Rotate => {
-                let points = 
-                    rotate_geometry(
-                        &bz.points, 
-                        &bz.mid_point, 
-                        &degrees, 
-                        Widget::Bezier
-                    );
-                p.move_to(points[0]);
-                p.quadratic_curve_to(points[2], points[1]);
-                p.move_to(points[0]);
-                p.line_to(points[1]);
+                p.move_to(bz.points[0]);
+                p.quadratic_curve_to(bz.points[2], bz.points[1]);
+                p.move_to(bz.points[0]);
+                p.line_to(bz.points[1]);
                 p.circle(bz.mid_point, 3.0);
             },
         }
@@ -2347,4 +2359,37 @@ fn test_get_line_from_slope_intercept() {
     let (slope, intercept) = get_linear_regression(&points);
     let line_points = get_line_from_slope_intercept(&points, slope, intercept);
     println!("{:?} {:?}, {:?}",slope, intercept, line_points );
+}
+
+#[test]
+fn test_get_angle() {
+    //  all 4 quadrants
+    let center = Point::new(0.0, 0.0);
+    let p2 = Point::new(0.0, 10.0);
+    let degrees = get_angle_of_vectors(center, p2);
+    dbg!(degrees);
+
+    let p2 = Point::new(20.0, 10.0);
+    let degrees = get_angle_of_vectors(center, p2);
+    dbg!(degrees);
+
+    let p2 = Point::new(0.0, -10.0);
+    let degrees = get_angle_of_vectors(center, p2);
+    dbg!(degrees);
+
+    let p2 = Point::new(-20.0, 0.0);
+    let degrees = get_angle_of_vectors(center, p2);
+    dbg!(degrees);
+}
+
+#[test]
+fn test_rotate_geometry() {
+    let mut points= vec![Point::new(0.0, 0.0), Point::new(0.0, 20.0)];
+    let mid_point = Point::new(0.0, 0.0);
+    let degrees = &6.0;
+    for _ in 0..2 {
+        points = rotate_geometry(&points.clone(), &mid_point, degrees, Widget::Line);
+        dbg!(&points);
+    }
+    
 }
