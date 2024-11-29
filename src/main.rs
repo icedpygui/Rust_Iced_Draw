@@ -226,7 +226,7 @@ impl Example {
             Message::PolyInput(input) => {
                 // little error checking
                 self.state.selected_poly_points_str = input.clone();
-                if input != "" {
+                if input.is_empty() {
                     self.state.selected_poly_points = input.parse().unwrap();
                 } else {
                     self.state.selected_poly_points = 4; //default
@@ -394,7 +394,7 @@ impl Example {
 pub fn save(path: impl AsRef<Path>, data: &impl Serialize) -> std::io::Result<()> {
     let mut w = BufWriter::new(File::create(path).expect("unable to create file"));
     serde_json::to_writer_pretty(&mut w, data).expect("unable to format data");
-    w.write(b"\n").expect("unable to append to buffer");
+    w.write_all(b"\n").expect("unable to append to buffer");
     w.flush().expect("unable to flush buffer");
     Ok(())
 }
@@ -450,6 +450,7 @@ pub struct ExportWidget {
     pub rotation: Option<f32>,
 }
 
+#[allow(clippy::redundant_closure)]
 fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
     
     let mut vec_dc = vec![];
@@ -556,7 +557,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
 
 }
 
-fn convert_to_export(curves: &Vec<DrawCurve>) -> Vec<ExportWidget> {
+fn convert_to_export(curves: &[DrawCurve]) -> Vec<ExportWidget> {
     let mut widgets = vec![];
     for curve in curves.iter() {
         widgets.push(curve.widget.clone())
@@ -601,7 +602,7 @@ fn convert_to_export(curves: &Vec<DrawCurve>) -> Vec<ExportWidget> {
         let x_mid_pt = ExportPoint::convert(&mid_point);
         let mut x_points = vec![];
         for point in points.iter() {
-            x_points.push(ExportPoint::convert(&point));
+            x_points.push(ExportPoint::convert(point));
         }
         export.push(
             ExportWidget{

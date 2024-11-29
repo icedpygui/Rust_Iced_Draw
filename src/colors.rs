@@ -9,26 +9,33 @@ use iced::Color;
 use serde::{Deserialize, Serialize};
 
 
-pub fn get_color(rgba: Option<[f32; 4]>, color: Option<DrawCanvasColor>, alpha: f32, invert: bool) -> Option<Color> {
+pub fn get_color(rgba: Option<[f32; 4]>, 
+                color: Option<DrawCanvasColor>, 
+                alpha: f32, 
+                invert: bool,
+                ) -> Option<Color> {
+                    
     if rgba.is_some() {
         let rgba = rgba.unwrap();
         let mut color: Color = Color::from_rgba(rgba[0], rgba[1], rgba[2], rgba[3] * alpha);
         if invert {
             color.invert()
         }
-        return Some(color)
+        Some(color)
     } else if color.is_some() {
         let mut color: Color = get_color_from_draw_canvas_color(color.unwrap());
         color = color.scale_alpha(alpha);
         if invert {
             color.invert()
         }
-        return Some(color)
+        Some(color)
     } else {
-        return None
-    };
+        None
+    }
+
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum DrawCanvasColor {
     PRIMARY,
