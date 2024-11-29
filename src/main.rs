@@ -50,7 +50,6 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(draw_curve) => {
-                dbg!(&draw_curve);
                 if draw_curve.edit_curve_index.is_some() {
                     self.curves[draw_curve.edit_curve_index.unwrap()] = draw_curve.clone();
                 } else {
