@@ -255,6 +255,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                 self.state.draw_width,
                                                 self.state.draw_mode,
                                             );
+
                                         let (widget, _) = set_widget_point(&selected_widget, cursor_position);
                                         *program_state = Some(Pending::New {
                                             widget,
@@ -294,7 +295,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                 CanvasWidget::Line(mut ln) => {
                                                     // degree is angle rotation around mid point 
                                                     let degrees = 
-                                                        get_angle_of_vectors(
+                                                        get_vertical_angle_of_vector(
                                                             ln.points[0],
                                                             ln.points[1], 
                                                         );
@@ -305,32 +306,10 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                         edit_curve_index: None,
                                                     })
                                                 },
-                                                CanvasWidget::PolyLine(mut pl) => {
-                                                    let (slope, intercept) =
-                                                        get_linear_regression(&pl.points);
-                                                    
-                                                    let line = 
-                                                        get_line_from_slope_intercept(
-                                                            &pl.points, 
-                                                            slope, 
-                                                            intercept
-                                                        );
-                                                    pl.mid_point = get_mid_point(line.0, line.1);
-                                                    pl.degrees = 
-                                                        get_angle_of_vectors(
-                                                            pl.mid_point,
-                                                            line.1,
-                                                        );
-
-                                                    Some(DrawCurve{
-                                                        widget: CanvasWidget::PolyLine(pl),
-                                                        edit_curve_index: None,
-                                                    })
-                                                },
                                                 CanvasWidget::Polygon(mut pg) => {
                                                     pg.pg_point = cursor_position;
                                                     let degrees = 
-                                                        get_angle_of_vectors(
+                                                        get_vertical_angle_of_vector(
                                                             pg.mid_point, 
                                                             cursor_position, 
                                                             );
@@ -346,6 +325,29 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                     
                                                     Some(DrawCurve {
                                                         widget:CanvasWidget::Polygon(pg),
+                                                        edit_curve_index: None,
+                                                    })
+                                                },
+                                                CanvasWidget::PolyLine(mut pl) => {
+                                                    let (slope, intercept) =
+                                                        get_linear_regression(&pl.points);
+                                                    
+                                                    let line = 
+                                                        get_line_from_slope_intercept(
+                                                            &pl.points, 
+                                                            slope, 
+                                                            intercept
+                                                        );
+                                                    pl.mid_point = get_mid_point(line.0, line.1);
+                                                    pl.pl_point = Point::new(pl.mid_point.x + 50.0, pl.mid_point.y);
+                                                    pl.degrees = 
+                                                        get_vertical_angle_of_vector(
+                                                            pl.mid_point,
+                                                            pl.pl_point,
+                                                        );
+
+                                                    Some(DrawCurve{
+                                                        widget: CanvasWidget::PolyLine(pl),
                                                         edit_curve_index: None,
                                                     })
                                                 },
@@ -609,6 +611,7 @@ impl DrawCurve {
                                 None, 
                                 None, 
                                 false,
+                                None,
                                 );
 
                             (Some(path), Some(line.color), Some(line.width))
@@ -626,6 +629,7 @@ impl DrawCurve {
                                 None, 
                                 None, 
                                 false,
+                                None,
                             );
                             (Some(path), Some(pl.color), Some(pl.width))
                         }
@@ -642,7 +646,9 @@ impl DrawCurve {
                                 pg.draw_mode, 
                                 None, 
                                 None, 
-                                false);
+                                false,
+                                None,
+                            );
                                 
                             (Some(path), Some(pg.color), Some(pg.width))
                         }
@@ -756,8 +762,22 @@ impl Pending {
                                     Some(cursor),
                                     None,
                                     false,
+                                    None,
                                 );
                             (path, line.color, line.width, Some(degrees), Some(line.points[0]))
+                        },
+                        CanvasWidget::Polygon(pg) => {
+                            let (path, degrees, mid_point) = 
+                                build_polygon_path(
+                                    pg,
+                                    DrawMode::New, 
+                                    Some(cursor),
+                                    None,
+                                    false,
+                                    None,
+                                );
+                            
+                            (path, pg.color, pg.width, Some(degrees), Some(mid_point))
                         },
                         // return points as they are set
                         CanvasWidget::PolyLine(pl) => {
@@ -768,20 +788,9 @@ impl Pending {
                                     Some(cursor),
                                     None,
                                     false,
+                                    None,
                                 );
                             (path, pl.color, pl.width, Some(degrees), Some(mid_point))
-                        },
-                        CanvasWidget::Polygon(pg) => {
-                            let (path, degrees, mid_point) = 
-                                build_polygon_path(
-                                    pg,
-                                    DrawMode::New, 
-                                    Some(cursor),
-                                    None,
-                                    false,
-                                );
-                            
-                            (path, pg.color, pg.width, Some(degrees), Some(mid_point))
                         },
                         CanvasWidget::RightTriangle(r_tr) => {
                             let (path, degrees, mid_point) = 
@@ -865,20 +874,10 @@ impl Pending {
                                     Some(cursor),
                                     *edit_point_index, 
                                     *edit_mid_point,
+                                    None,
                                 );
                             
                             (path, line.color, line.width, Some(degrees), mid_point)
-                        },
-                        CanvasWidget::PolyLine(pl) => {
-                            let (path, degrees, mid_point) = 
-                                build_polyline_path(
-                                    pl, 
-                                    DrawMode::Edit, 
-                                    Some(cursor),
-                                    *edit_point_index, 
-                                    *edit_mid_point,
-                                );
-                            (path, pl.color, pl.width, Some(degrees), mid_point)
                         },
                         CanvasWidget::Polygon(pg) => {
                             let (path, degrees, mid_point) = 
@@ -888,8 +887,21 @@ impl Pending {
                                     Some(cursor),
                                     *edit_point_index, 
                                     *edit_mid_point,
+                                    None,
                                 );
                             (path, pg.color, pg.width, Some(degrees), mid_point)
+                        },
+                        CanvasWidget::PolyLine(pl) => {
+                            let (path, degrees, mid_point) = 
+                                build_polyline_path(
+                                    pl, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    *edit_point_index, 
+                                    *edit_mid_point,
+                                    None,
+                                );
+                            (path, pl.color, pl.width, Some(degrees), mid_point)
                         },
                         CanvasWidget::RightTriangle(tr) => {
                             let (path, degrees, mid_point) = 
@@ -955,37 +967,40 @@ impl Pending {
                             (path, cir.color, cir.width, cir.center, None)
                         },
                             CanvasWidget::Line(line) => {
-                            let (path, _, _) = 
+                            let (path, pending_degrees, _) = 
                                 build_line_path(
                                     line, 
-                                    DrawMode::Rotate, 
+                                    line.draw_mode, 
                                     None,
                                     None,
                                     false,
+                                    *degrees,
                                 );
-                            (path, line.color, line.width, line.mid_point, None)
+                            (path, line.color, line.width, line.mid_point, Some(pending_degrees))
+                        },
+                        CanvasWidget::Polygon(pg) => {
+                            let (path, pending_degrees, _) = 
+                                build_polygon_path(
+                                    pg, 
+                                    pg.draw_mode, 
+                                    None,
+                                    None,
+                                    false,
+                                    *degrees,
+                                );
+                            (path, pg.color, pg.width, pg.mid_point, Some(pending_degrees))
                         },
                         CanvasWidget::PolyLine(pl) => {
-                            let (path, _, _) = 
+                            let (path, pending_degrees, _) = 
                                 build_polyline_path(
                                     pl, 
                                     DrawMode::Rotate, 
                                     None,
                                     None,
                                     false,
+                                    *degrees,
                                 );
-                            (path, pl.color, pl.width, pl.mid_point, None)
-                        },
-                        CanvasWidget::Polygon(pg) => {
-                            let (path, _, _) = 
-                                build_polygon_path(
-                                    pg, 
-                                    DrawMode::Rotate, 
-                                    None,
-                                    None,
-                                    false,
-                                );
-                            (path, pg.color, pg.width, pg.mid_point, None)
+                            (path, pl.color, pl.width, pl.mid_point, Some(pending_degrees))
                         },
                         CanvasWidget::RightTriangle(tr) => {
                             let (path, _, _) = 
@@ -1065,6 +1080,7 @@ pub struct PolyLine {
     pub points: Vec<Point>,
     pub poly_points: usize,
     pub mid_point: Point,
+    pub pl_point: Point,
     pub color: Color,
     pub width: f32,
     pub degrees: f32,
@@ -1117,11 +1133,11 @@ fn get_distance_to_mid_point(draw_curve: &DrawCurve, cursor: Point) -> f32 {
             CanvasWidget::Line(line) => {
                 cursor.distance(line.mid_point)
             },
-            CanvasWidget::PolyLine(pl) => {
-                cursor.distance(pl.mid_point)
-            },
             CanvasWidget::Polygon(pg) => {
                 cursor.distance(pg.mid_point)
+            },
+            CanvasWidget::PolyLine(pl) => {
+                cursor.distance(pl.mid_point)
             },
             CanvasWidget::RightTriangle(tr) => {
                 cursor.distance(tr.mid_point)
@@ -1191,27 +1207,32 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
         CanvasWidget::Bezier(bz) => {
             bz.draw_mode = draw_mode;
             bz.points = rotate_geometry(&bz.points, &bz.mid_point, &step_degrees, Widget::Bezier);
-            bz.degrees = get_angle_of_vectors(bz.mid_point, bz.points[1]);
+            bz.degrees = get_vertical_angle_of_vector(bz.mid_point, bz.points[1]);
             (CanvasWidget::Bezier(bz.clone()), bz.degrees)
         },
         CanvasWidget::Circle(cir) => {
-            cir.draw_mode = DrawMode::DrawAll;
+            cir.draw_mode = draw_mode;
             (CanvasWidget::Circle(cir.clone()), 0.0)
         },
         CanvasWidget::Line(ln) => {
-            ln.draw_mode = DrawMode::DrawAll;
-            ln.degrees = degrees;
+            ln.draw_mode = draw_mode;
+            ln.points = rotate_geometry(&ln.points, &ln.mid_point, &step_degrees, Widget::Line);
+            ln.degrees = get_vertical_angle_of_vector(ln.mid_point, ln.points[1]);
             (CanvasWidget::Line(ln.clone()), ln.degrees)
         },
+        CanvasWidget::Polygon(pg) => {
+            pg.draw_mode = draw_mode;
+            pg.points = rotate_geometry(&pg.points, &pg.mid_point, &step_degrees, Widget::Polygon);
+            pg.pg_point = rotate_geometry(&[pg.pg_point], &pg.mid_point, &step_degrees, Widget::Line)[0];
+            pg.degrees = get_vertical_angle_of_vector(pg.mid_point, pg.pg_point);
+            (CanvasWidget::Polygon(pg.clone()), pg.degrees)
+        },
         CanvasWidget::PolyLine(pl) => {
-            pl.draw_mode = DrawMode::DrawAll;
+            pl.draw_mode = draw_mode;
+            pl.points = rotate_geometry(&pl.points, &pl.mid_point, &step_degrees, Widget::PolyLine);
+            pl.pl_point = rotate_geometry(&[pl.pl_point], &pl.mid_point, &step_degrees, Widget::Line)[0];
             pl.degrees = degrees;
             (CanvasWidget::PolyLine(pl.clone()), pl.degrees)
-        },
-        CanvasWidget::Polygon(pg) => {
-            pg.draw_mode = DrawMode::DrawAll;
-            pg.degrees = degrees;
-            (CanvasWidget::Polygon(pg.clone()), pg.degrees)
         },
         CanvasWidget::RightTriangle(tr) => {
             tr.draw_mode = DrawMode::DrawAll;
@@ -1267,7 +1288,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             bz.points.push(cursor);
 
             if bz.points.len() == 2 {
-                bz.degrees = get_angle_of_vectors(bz.points[0], bz.points[1]);
+                bz.degrees = get_vertical_angle_of_vector(bz.points[0], bz.points[1]);
             }
             let finished = if bz.points.len() == 3 {
                 // degrees won't change with this last point
@@ -1334,7 +1355,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             };
             if finished {
                 pg.draw_mode = DrawMode::DrawAll;
-                pg.degrees = get_angle_of_vectors(pg.mid_point, pg.pg_point)
+                pg.degrees = get_vertical_angle_of_vector(pg.mid_point, pg.pg_point)
             }
             (CanvasWidget::Polygon(pg), finished)
         },
@@ -1386,7 +1407,7 @@ fn edit_widget_points(widget: CanvasWidget,
                 bz.mid_point = cursor;
             }
             let degrees = 
-                get_angle_of_vectors(
+                get_vertical_angle_of_vector(
                     bz.points[0],
                     bz.points[1], 
                 );
@@ -1427,7 +1448,7 @@ fn edit_widget_points(widget: CanvasWidget,
             }
 
             let degrees = 
-                get_angle_of_vectors(
+                get_vertical_angle_of_vector(
                     line.points[0],  
                     line.points[1], 
                 );
@@ -1511,10 +1532,11 @@ fn edit_widget_points(widget: CanvasWidget,
     }
 }
 
+// returns a bool if mid_point and an optional usize 
+// if a point in points.
 fn find_closest_point_index(widget: &CanvasWidget,
                             cursor: Point, 
-                            ) 
-                            -> (Option<usize>, bool) {
+                            ) -> (Option<usize>, bool) {
 
     let mut point_dist: f32 = 1_000_000.0;
     let mut point_index = 0;
@@ -1564,6 +1586,16 @@ fn find_closest_point_index(widget: &CanvasWidget,
                 (Some(point_index), false)
             }
         },
+        CanvasWidget::Polygon(pg) => {
+            dbg!(&pg.points);
+            let pg_center = cursor.distance(pg.mid_point);
+            let pg_point = cursor.distance(pg.pg_point);
+            if pg_center <= pg_point {
+                (None, true)
+            } else {
+                (Some(1), false)
+            }
+        },
         CanvasWidget::PolyLine(poly_line) => {
             for (idx, point) in poly_line.points.iter().enumerate() {
                 let dist = cursor.distance(*point);
@@ -1578,15 +1610,6 @@ fn find_closest_point_index(widget: &CanvasWidget,
                 (None, true)
             } else {
                 (Some(point_index), false)
-            }
-        },
-        CanvasWidget::Polygon(pg) => {
-            let pg_center = cursor.distance(pg.points[0]);
-            let pg_point = cursor.distance(pg.points[1]);
-            if pg_center <= pg_point {
-                (None, true)
-            } else {
-                (Some(1), false)
             }
         },
         CanvasWidget::RightTriangle(tr) => {
@@ -1743,26 +1766,26 @@ fn translate_geometry(pts: Vec<Point>,
 }
 
 // The degrees are adjusted based on how degrees where calulated for each widget.
-fn rotate_geometry(points: &[Point], mid_point: &Point, degrees: &f32, widget: Widget) -> Vec<Point> {
+fn rotate_geometry(points: &[Point], mid_point: &Point, step_degrees: &f32, widget: Widget) -> Vec<Point> {
     match widget {
         Widget::None => vec![],
         Widget::Bezier => {
-            rotate_widget(points, mid_point, &degrees)
+            rotate_widget(points, mid_point, &step_degrees)
         },
         Widget::Circle => {
-            rotate_widget(points, mid_point, degrees)
+            rotate_widget(points, mid_point, step_degrees)
         },
         Widget::Line => {
-            rotate_widget(points, mid_point, degrees)
+            rotate_widget(points, mid_point, step_degrees)
         },
         Widget::PolyLine => {
-            rotate_widget(points, mid_point, degrees)
+            rotate_widget(points, mid_point, step_degrees)
         },
         Widget::Polygon => {
-            rotate_widget(points, mid_point, degrees)
+            rotate_widget(points, mid_point, step_degrees)
         },
         Widget::RightTriangle => {
-            rotate_widget(points, mid_point, degrees)
+            rotate_widget(points, mid_point, step_degrees)
         },
     }
 }
@@ -1782,7 +1805,7 @@ fn rotate_widget(points: &[Point], center: &Point, degrees: &f32) -> Vec<Point> 
 }
 
 // The first point is used to create a vertical vector and is used as the center
-fn get_angle_of_vectors(center: Point, p2: Point) -> f32 {
+pub fn get_vertical_angle_of_vector(center: Point, p2: Point) -> f32 {
     let p1 = Point::new(center.x, 10.0);
     let pts = translate_geometry(vec![p1, p2], Point::default(), center);
 
@@ -1795,7 +1818,24 @@ fn get_angle_of_vectors(center: Point, p2: Point) -> f32 {
     } else {
         angle
     };
-    println!("at angle {}", to_degrees(&new_angle));
+
+    to_degrees(&new_angle)
+}
+
+pub fn get_angle_of_vectors(center: Point, p1: Point, p2: Point) -> f32 {
+
+    let pts = translate_geometry(vec![p1, p2], Point::default(), center);
+
+    let angle = ((pts[0].y).atan2(pts[0].x) -
+                        (pts[1].y).atan2(pts[1].x)) * -1.0;
+    
+    // Since beyond pi, angle goes negative
+    let new_angle = if angle < 0.0 {
+        2.0 * PI + angle
+    } else {
+        angle
+    };
+
     to_degrees(&new_angle)
 }
 
@@ -1807,10 +1847,10 @@ fn to_radians(degrees: &f32) -> f32 {
     degrees * PI/180.0
 }
 
-fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f32) -> Vec<Point> {
+fn build_polygon(mid_point: Point, pg_point: Point, poly_points: usize, mut degrees: f32) -> Vec<Point> {
     
     let angle = 2.0 * PI / poly_points as f32;
-    let radius = mid_point.distance(point);
+    let radius = mid_point.distance(pg_point);
     let mut points = vec![];
     for i in 0..poly_points {
         let x = mid_point.x + radius * (i as f32 * angle).sin();
@@ -1818,6 +1858,7 @@ fn build_polygon(mid_point: Point, point: Point, poly_points: usize, degrees: f3
         points.push(Point::new(x, y));
     }
     
+    degrees += 180.0;
     let mut pts = rotate_geometry(&points, &mid_point, &degrees, Widget::Polygon);
     pts.push(pts[0]);
     pts
@@ -1836,10 +1877,9 @@ fn build_bezier_path(bz: &Bezier,
         Some(d) => d,
         None => bz.degrees,
     };
-    
     let mut mid_point = bz.mid_point;
-    let path = Path::new(|p| {
 
+    let path = Path::new(|p| {
         match draw_mode {
             DrawMode::DrawAll => {
                 p.move_to(bz.points[0]);
@@ -1861,7 +1901,7 @@ fn build_bezier_path(bz: &Bezier,
                     mid_point = get_mid_point(pts[0], pts[1]);
                     
                     degrees = 
-                        get_angle_of_vectors(
+                        get_vertical_angle_of_vector(
                             mid_point, 
                             pts[1], 
                         );
@@ -1884,7 +1924,7 @@ fn build_bezier_path(bz: &Bezier,
                             pending_cursor.unwrap()
                         );
                     degrees = 
-                        get_angle_of_vectors(
+                        get_vertical_angle_of_vector(
                             bz.points[0],  
                             pending_cursor.unwrap(),
                         );
@@ -1961,9 +2001,13 @@ fn build_line_path(line: &Line,
                     pending_cursor: Option<Point>,
                     edit_point_index: Option<usize>, 
                     edit_mid_point: bool,
-                ) -> (Path, f32, Point) {
+                    degrees: Option<f32>,
+                    ) -> (Path, f32, Point) {
 
-    let mut degrees = 0.0;
+    let mut degrees = match degrees {
+        Some(d) => d,
+        None => line.degrees,
+    };
     let mut mid_point = line.mid_point;
 
     let path = Path::new(|p| {
@@ -1990,7 +2034,7 @@ fn build_line_path(line: &Line,
                 }
 
                 degrees = 
-                    get_angle_of_vectors(
+                    get_vertical_angle_of_vector(
                         pts[0],  
                         pts[1], 
                     );
@@ -2006,7 +2050,7 @@ fn build_line_path(line: &Line,
                 p.line_to(pending_cursor.unwrap());
 
                 degrees = 
-                    get_angle_of_vectors(
+                    get_vertical_angle_of_vector(
                         line.points[0], 
                         pending_cursor.unwrap(), 
                     );
@@ -2014,13 +2058,109 @@ fn build_line_path(line: &Line,
             DrawMode::Rotate => {
                 p.move_to(line.points[0]);
                 p.line_to(line.points[1]);
+                p.circle(mid_point, 3.0);
+            },
+        }
+    });
 
-                // rotates around the center
-                degrees = 
-                    get_angle_of_vectors(
-                        line.mid_point,  
-                        line.points[1], 
+    (path, degrees, mid_point)
+
+}
+
+fn build_polygon_path(pg: &Polygon, 
+                        draw_mode: DrawMode, 
+                        pending_cursor: Option<Point>,
+                        edit_point_index: Option<usize>, 
+                        edit_mid_point: bool,
+                        degrees: Option<f32>,
+                        ) -> (Path, f32, Point) {
+
+    let mut degrees = match degrees {
+        Some(d) => d,
+        None => pg.degrees,
+    };
+    let mut mid_point = pg.mid_point;
+
+    let path = Path::new(|p| {
+        match draw_mode {
+            DrawMode::DrawAll => {
+                let points = &pg.points;
+                for (index, point) in points.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+                p.line_to(points[0]);
+            },
+            DrawMode::Edit => {
+                let mut pg_point = pg.pg_point;
+
+                if edit_mid_point {
+                    pg_point = translate_geometry(
+                        vec![pg.pg_point], 
+                        pending_cursor.unwrap(),
+                        pg.mid_point, 
+                    )[0];
+                    mid_point = pending_cursor.unwrap();
+                } 
+                if edit_point_index.is_some() {
+                    pg_point = pending_cursor.unwrap();
+                    degrees = get_vertical_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
+                }
+                
+                let pts = 
+                    build_polygon(
+                        mid_point, 
+                        pg_point, 
+                        pg.poly_points,
+                        degrees
                     );
+                
+                for (index, pt) in pts.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*pt);
+                    } else {
+                        p.line_to(*pt);
+                    }
+                }
+                p.line_to(pts[0]);
+                p.circle(mid_point, 3.0);
+                p.circle(pg_point, 3.0);
+            },
+            DrawMode::New => {
+                degrees = get_vertical_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
+
+                let points = 
+                    build_polygon(
+                        pg.mid_point, 
+                        pending_cursor.unwrap(), 
+                        pg.poly_points,
+                        degrees,
+                    );
+                
+                for (index, point) in points.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+                p.move_to(pg.mid_point);
+                p.line_to(pending_cursor.unwrap());
+                p.circle(points[0], 3.0);
+            },
+            DrawMode::Rotate => {
+                for (index, point) in pg.points.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+                p.move_to(pg.mid_point);
+                p.line_to(pg.pg_point);
             },
         }
     });
@@ -2034,9 +2174,13 @@ fn build_polyline_path(pl: &PolyLine,
                         pending_cursor: Option<Point>,
                         edit_point_index: Option<usize>, 
                         edit_mid_point: bool,
-                    ) -> (Path, f32, Point) {
+                        degrees: Option<f32>,
+                        ) -> (Path, f32, Point) {
 
-    let degrees = pl.degrees;
+    let mut degrees = match degrees {
+        Some(d) => d,
+        None => pl.degrees,
+    };
     let mut mid_point = pl.mid_point;
 
     let path = Path::new(|p| {
@@ -2097,108 +2241,13 @@ fn build_polyline_path(pl: &PolyLine,
                         p.line_to(*point);
                     }
                 }
-                let (slope, intercept) = get_linear_regression(&pl.points);
-                let(p1, p2) = get_line_from_slope_intercept(&pl.points, slope, intercept);
-                mid_point = get_mid_point(p1, p2);
-                p.move_to(p1);
-                p.line_to(p2);
+                // let (slope, intercept) = get_linear_regression(&pl.points);
+                // let(p1, p2) = get_line_from_slope_intercept(&pl.points, slope, intercept);
+                // mid_point = get_mid_point(p1, p2);
+                // degrees = get_vertical_angle_of_vector(mid_point, p2);
+                p.move_to(pl.mid_point);
+                p.line_to(pl.pl_point);
                 p.circle(mid_point, 3.0);
-            },
-        }
-    });
-
-    (path, degrees, mid_point)
-
-}
-
-fn build_polygon_path(pg: &Polygon, 
-                        draw_mode: DrawMode, 
-                        pending_cursor: Option<Point>,
-                        edit_point_index: Option<usize>, 
-                        edit_mid_point: bool,
-                    ) -> (Path, f32, Point) {
-
-    let mut degrees = 0.0;
-    let mut mid_point = pg.mid_point;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                let points = &pg.points;
-                for (index, point) in points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.line_to(points[0]);
-            },
-            DrawMode::Edit => {
-                let mut pg_point = pg.pg_point;
-
-                if edit_mid_point {
-                    pg_point = translate_geometry(
-                        vec![pg.pg_point], 
-                        pending_cursor.unwrap(),
-                        pg.mid_point, 
-                    )[0];
-                    mid_point = pending_cursor.unwrap();
-                } 
-                if edit_point_index.is_some() {
-                    pg_point = pending_cursor.unwrap();
-                }
-
-                let pts = 
-                    build_polygon(
-                        mid_point, 
-                        pg_point, 
-                        pg.poly_points,
-                        pg.degrees
-                    );
-
-                for (index, pt) in pts.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*pt);
-                    } else {
-                        p.line_to(*pt);
-                    }
-                }
-                p.line_to(pts[0]);
-                p.circle(mid_point, 3.0);
-                p.circle(pg_point, 3.0);
-            },
-            DrawMode::New => {
-                degrees = get_angle_of_vectors(pg.mid_point, pending_cursor.unwrap());
-
-                let points = 
-                    build_polygon(
-                        pg.mid_point, 
-                        pending_cursor.unwrap(), 
-                        pg.poly_points,
-                        degrees,
-                    );
-                for (index, point) in points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.move_to(pg.mid_point);
-                p.line_to(pending_cursor.unwrap());
-            },
-            DrawMode::Rotate => {
-                for (index, point) in pg.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.move_to(pg.mid_point);
-                p.line_to(pg.points[2]);
-                p.circle(pg.mid_point, 3.0);
             },
         }
     });
@@ -2367,19 +2416,19 @@ fn test_get_angle() {
     //  all 4 quadrants
     let center = Point::new(0.0, 0.0);
     let p2 = Point::new(0.0, 10.0);
-    let degrees = get_angle_of_vectors(center, p2);
+    let degrees = get_vertical_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(20.0, 10.0);
-    let degrees = get_angle_of_vectors(center, p2);
+    let degrees = get_vertical_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(0.0, -10.0);
-    let degrees = get_angle_of_vectors(center, p2);
+    let degrees = get_vertical_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(-20.0, 0.0);
-    let degrees = get_angle_of_vectors(center, p2);
+    let degrees = get_vertical_angle_of_vector(center, p2);
     dbg!(degrees);
 }
 
@@ -2392,5 +2441,4 @@ fn test_rotate_geometry() {
         points = rotate_geometry(&points.clone(), &mid_point, degrees, Widget::Line);
         dbg!(&points);
     }
-    
 }

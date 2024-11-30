@@ -13,7 +13,7 @@ use iced::{event, keyboard, Color, Element,
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_vertical_angle_of_vector, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
 
 
@@ -146,6 +146,7 @@ impl Example {
                                     points: vec![],
                                     poly_points: self.state.selected_poly_points,
                                     mid_point: Point::default(),
+                                    pl_point: Point::default(),
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
                                     degrees: 0.0,
@@ -225,7 +226,7 @@ impl Example {
             Message::PolyInput(input) => {
                 // little error checking
                 self.state.selected_poly_points_str = input.clone();
-                if input.is_empty() {
+                if !input.is_empty() {
                     self.state.selected_poly_points = input.parse().unwrap();
                 } else {
                     self.state.selected_poly_points = 4; //default
@@ -444,9 +445,9 @@ pub struct ExportWidget {
     pub points: Vec<ExportPoint>,
     pub poly_points: usize,
     pub mid_point: ExportPoint,
+    pub other_point: ExportPoint,
     pub color: ExportColor,
     pub width: f32,
-    pub rotation: Option<f32>,
 }
 
 #[allow(clippy::redundant_closure)]
@@ -455,6 +456,13 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
     let mut vec_dc = vec![];
 
     for widget in widgets.iter() {
+        let points: Vec<Point> = widget.points.iter().map(|p| convert_to_point(p)).collect();
+        let mid_point = convert_to_point(&widget.mid_point);
+        let other_point = convert_to_point(&widget.other_point);
+        let color = convert_to_color(&widget.color);
+        let width = widget.width;
+        let draw_mode = DrawMode::DrawAll;
+
         match widget.name {
             Widget::None => {
                 vec_dc.push(DrawCurve{
@@ -463,13 +471,14 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 })
             },
             Widget::Bezier => {
+                let point = points[1].clone();
                 let bz = Bezier {
-                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
-                    mid_point: convert_to_point(&widget.mid_point),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    degrees: widget.rotation.unwrap(),
-                    draw_mode: DrawMode::DrawAll,
+                    points: points,
+                    mid_point,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    draw_mode,
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Bezier(bz),
@@ -478,12 +487,12 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
             },
             Widget::Circle => {
                 let cir = Circle {
-                    center: convert_to_point(&widget.mid_point),
+                    center: mid_point,
                     circle_point: convert_to_point(&widget.points[0]),
                     radius: widget.mid_point.distance(widget.points[0]),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    draw_mode: DrawMode::DrawAll,
+                    color,
+                    width,
+                    draw_mode,
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Circle(cir),
@@ -491,58 +500,61 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 });
             },
             Widget::Line => {
+                let point = points[1].clone();
                 let ln = Line {
-                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
-                    mid_point: convert_to_point(&widget.mid_point),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    degrees: widget.rotation.unwrap(),
-                    draw_mode: DrawMode::DrawAll,
+                    points,
+                    mid_point,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    draw_mode,
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Line(ln),
                     edit_curve_index: None,
                 });
             },
-            Widget::PolyLine => {
-                let pl = PolyLine {
-                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
-                    poly_points: widget.poly_points,
-                    mid_point: convert_to_point(&widget.mid_point),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    degrees: widget.rotation.unwrap(),
-                    draw_mode: DrawMode::DrawAll,
-                };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::PolyLine(pl),
-                    edit_curve_index: None,
-                });
-            },
             Widget::Polygon => {
                 let pg = Polygon {
-                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
+                    points,
                     poly_points: widget.poly_points,
-                    mid_point: convert_to_point(&widget.mid_point),
-                    pg_point: convert_to_point(&widget.points[0]),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    degrees: widget.rotation.unwrap(),
-                    draw_mode: DrawMode::DrawAll,
+                    mid_point,
+                    pg_point: other_point,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, other_point),
+                    draw_mode,
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Polygon(pg),
                     edit_curve_index: None,
                 });
             },
+            Widget::PolyLine => {
+                let pl = PolyLine {
+                    points,
+                    poly_points: widget.poly_points,
+                    mid_point,
+                    pl_point: other_point,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, other_point),
+                    draw_mode,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::PolyLine(pl),
+                    edit_curve_index: None,
+                });
+            },
             Widget::RightTriangle => {
+                let point = points[0].clone();
                 let tr = RightTriangle {
-                    points: widget.points.iter().map(|p| convert_to_point(p)).collect(),
-                    mid_point: convert_to_point(&widget.mid_point),
-                    color: convert_to_color(&widget.color),
-                    width: widget.width,
-                    degrees: widget.rotation.unwrap(),
-                    draw_mode: DrawMode::DrawAll,
+                    points,
+                    mid_point,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    draw_mode,
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::RightTriangle(tr),
@@ -568,50 +580,53 @@ fn convert_to_export(curves: &[DrawCurve]) -> Vec<ExportWidget> {
 
         let (name, 
             points, 
-            mid_point, 
+            mid_point,
+            other_point, 
             poly_points, 
             color, 
             width, 
-            rotation) = 
+            ) = 
             match widget {
                 CanvasWidget::None => {
-                    (Widget::None, &vec![], Point::default(), 0, Color::TRANSPARENT, 0.0, None)
+                    (Widget::None, &vec![], Point::default(), Point::default(), 0, Color::TRANSPARENT, 0.0,)
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, 0, bz.color, bz.width, Some(bz.degrees))
+                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.color, bz.width)
                 },
                 CanvasWidget::Circle(cir) => {
-                    (Widget::Circle, &vec![cir.circle_point], cir.center, 0, cir.color, cir.width, None)
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, cir.color, cir.width)
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, 0, ln.color, ln.width, Some(ln.degrees))
-                },
-                CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.poly_points, pl.color, pl.width, Some(pl.degrees))
+                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.color, ln.width)
                 },
                 CanvasWidget::Polygon(pg) => {
-                    (Widget::Polygon, &pg.points, pg.mid_point, pg.poly_points, pg.color, pg.width, Some(pg.degrees))
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.color, pg.width)
+                },
+                CanvasWidget::PolyLine(pl) => {
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.color, pl.width)
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, 3, tr.color, tr.width, Some(tr.degrees))
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, Point::default(), 3, tr.color, tr.width)
                 },
         };
 
         let x_color = ExportColor::from_rgba(&color);
         let x_mid_pt = ExportPoint::convert(&mid_point);
+        let x_other_point = ExportPoint::convert(&other_point);
         let mut x_points = vec![];
         for point in points.iter() {
             x_points.push(ExportPoint::convert(point));
         }
+        
         export.push(
             ExportWidget{
                 name,
                 points: x_points,
                 poly_points, 
-                mid_point: x_mid_pt, 
+                mid_point: x_mid_pt,
+                other_point: x_other_point, 
                 color: x_color, 
-                width, 
-                rotation, 
+                width,  
             })
     }
     
