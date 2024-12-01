@@ -50,7 +50,8 @@ impl Example {
     fn update(&mut self, message: Message) {
         match message {
             Message::AddCurve(draw_curve) => {
-                if draw_curve.edit_curve_index.is_some() {
+                if draw_curve.edit_curve_index.is_some() && 
+                    !self.curves.is_empty(){
                     self.curves[draw_curve.edit_curve_index.unwrap()] = draw_curve.clone();
                 } else {
                     self.curves.push(draw_curve);
@@ -176,7 +177,8 @@ impl Example {
                             CanvasWidget::RightTriangle(
                                 RightTriangle { 
                                     points: vec![], 
-                                    mid_point: Point::default(), 
+                                    mid_point: Point::default(),
+                                    tr_point: Point::default(), 
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
                                     degrees: 0.0,
@@ -551,6 +553,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 let tr = RightTriangle {
                     points,
                     mid_point,
+                    tr_point: other_point,
                     color,
                     width,
                     degrees: get_vertical_angle_of_vector(mid_point, point),
