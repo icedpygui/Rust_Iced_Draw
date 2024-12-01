@@ -323,11 +323,11 @@ impl Example {
         let widths: Element<Message> = text(format!("widths = {}", 2.0)).into();
 
         let poly_pts_input: Element<Message> = 
-            text_input("Poly Points(3)", &self.state.selected_poly_points_str)
-            .on_input(Message::PolyInput)
-            .into();
+            text_input("Poly Points(3)", 
+                        &self.state.selected_poly_points_str)
+                .on_input(Message::PolyInput)
+                .into();
 
-        
         let mode_options = vec!["None".to_string(), "New".to_string(), "Edit".to_string(), "Rotate".to_string()];
         let mode: Element<Message> = 
         pick_list(

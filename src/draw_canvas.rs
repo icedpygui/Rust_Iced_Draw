@@ -345,7 +345,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                                             pl.mid_point,
                                                             pl.pl_point,
                                                         );
-
+                                                   
                                                     Some(DrawCurve{
                                                         widget: CanvasWidget::PolyLine(pl),
                                                         edit_curve_index: None,
@@ -1456,6 +1456,36 @@ fn edit_widget_points(widget: CanvasWidget,
 
             CanvasWidget::Line(line)
         },
+        CanvasWidget::Polygon(mut pg) => {
+            if index.is_some() {
+                pg.pg_point = cursor;
+                pg.points = 
+                    build_polygon(
+                        pg.mid_point, 
+                        pg.pg_point, 
+                        pg.poly_points,
+                        pg.degrees,
+                );
+            } else if mid_point {
+                let trans_pts = 
+                    translate_geometry(
+                        vec![pg.pg_point], 
+                        cursor,
+                        pg.mid_point, 
+                    );
+                pg.points = 
+                    build_polygon(
+                        cursor, 
+                        trans_pts[0], 
+                        pg.poly_points,
+                        pg.degrees,
+                    );
+                pg.mid_point = cursor;
+                pg.pg_point = trans_pts[0];
+            }
+
+            CanvasWidget::Polygon(pg)
+        },
         CanvasWidget::PolyLine(mut pl) => {
             if index.is_some() {
                 pl.points[index.unwrap()] = cursor;
@@ -1471,37 +1501,6 @@ fn edit_widget_points(widget: CanvasWidget,
             }
 
             CanvasWidget::PolyLine(pl)
-        },
-        CanvasWidget::Polygon(mut pg) => {
-            if index.is_some() {
-                pg.pg_point = cursor;
-                pg.points = 
-                    build_polygon(
-                        pg.mid_point, 
-                        pg.pg_point, 
-                        pg.poly_points,
-                        pg.degrees,
-                );
-            } else if mid_point {
-                let mut pts = vec![pg.pg_point];
-                pts = 
-                    translate_geometry(
-                        pts, 
-                        cursor,
-                        pg.mid_point, 
-                    );
-                pg.points = 
-                    build_polygon(
-                        cursor, 
-                        pts[0], 
-                        pg.poly_points,
-                        pg.degrees,
-                    );
-                pg.mid_point = cursor;
-                pg.pg_point = pts[0];
-            }
-
-            CanvasWidget::Polygon(pg)
         },
         CanvasWidget::RightTriangle(mut tr) => {
             if index.is_some() {
@@ -1587,7 +1586,6 @@ fn find_closest_point_index(widget: &CanvasWidget,
             }
         },
         CanvasWidget::Polygon(pg) => {
-            dbg!(&pg.points);
             let pg_center = cursor.distance(pg.mid_point);
             let pg_point = cursor.distance(pg.pg_point);
             if pg_center <= pg_point {
@@ -2195,7 +2193,6 @@ fn build_polyline_path(pl: &PolyLine,
                 }
             },
             DrawMode::Edit => {
-                let mut mid_point = pl.mid_point;
                 let mut pts = pl.points.clone();
 
                 if edit_mid_point {
