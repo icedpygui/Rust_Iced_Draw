@@ -7,13 +7,12 @@ use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text, text_input, vertical_space};
-use iced::{event, keyboard, Color, Element, 
-    Event, Point, Subscription, Theme};
+use iced::{event, keyboard, Color, Element, Event, Point, Radians, Subscription, Theme, Vector};
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_vertical_angle_of_vector, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_vertical_angle_of_vector, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
 
 
@@ -98,6 +97,21 @@ impl Example {
             },
             Message::RadioSelected(choice) => {
                 match choice {
+                    Widget::Arc => {
+                        self.state.selected_widget  = 
+                            CanvasWidget::Arc(
+                                Arc {
+                                    points: vec![],
+                                    mid_point: Point::default(),
+                                    radius: 0.0,
+                                    color: self.state.selected_color,
+                                    width: self.state.draw_width,
+                                    degrees: 0.0,
+                                    draw_mode: self.state.draw_mode,
+                                }
+                            );
+                        self.state.selected_radio_widget = Some(Widget::Arc);
+                    },
                     Widget::Bezier => {
                         self.state.selected_widget  = 
                             CanvasWidget::Bezier(
@@ -122,6 +136,25 @@ impl Example {
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
                                     draw_mode: self.state.draw_mode,
+                                }
+                            );
+                        self.state.selected_radio_widget = Some(Widget::Circle);
+                    },
+                    Widget::Ellipse => {
+                        self.state.selected_widget = 
+                            CanvasWidget::Ellipse(
+                                draw_canvas::Ellipse {
+                                    center: Point::default(),
+                                    color: self.state.selected_color,
+                                    width: self.state.draw_width,
+                                    draw_mode: self.state.draw_mode,
+                                    points: vec![],
+                                    ell_point: Point::default(),
+                                    radii: Vector::ZERO,
+                                    rotation: Radians::PI,
+                                    start_angle: Radians::PI,
+                                    end_angle: Radians::PI,
+                                    degrees: 0.0,
                                 }
                             );
                         self.state.selected_radio_widget = Some(Widget::Circle);
@@ -244,13 +277,21 @@ impl Example {
     }
 
     fn view(&self) -> Element<Message> {
-        let clear_btn: Element<Message> = 
+        let clear_btn = 
             button(
                 "Clear")
                 .on_press(Message::Clear)
                 .into();
 
-        let biezer: Element<Message> = 
+        let arc = 
+            radio(
+                "Arc",
+                Widget::Arc,
+                self.state.selected_radio_widget,
+                Message::RadioSelected,
+                ).into();
+
+        let biezer = 
             radio(
                 "Beizer",
                 Widget::Bezier,
@@ -258,15 +299,23 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let circle: Element<Message> = 
+        let circle = 
             radio(
                 "Circle",
                 Widget::Circle,
                 self.state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
+        
+        let eliptical = 
+            radio(
+                "Beizer",
+                Widget::Bezier,
+                self.state.selected_radio_widget,
+                Message::RadioSelected,
+                ).into();
 
-        let line: Element<Message> = 
+        let line = 
             radio(
                 "Line",
                 Widget::Line,
@@ -274,15 +323,15 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let polygon: Element<Message> = 
-        radio(
-            "Polygon",
-            Widget::Polygon,
-            self.state.selected_radio_widget,
-            Message::RadioSelected,
-            ).into();
+        let polygon = 
+            radio(
+                "Polygon",
+                Widget::Polygon,
+                self.state.selected_radio_widget,
+                Message::RadioSelected,
+                ).into();
 
-        let polyline: Element<Message> = 
+        let polyline = 
             radio(
                 "PolyLine",
                 Widget::PolyLine,
@@ -290,7 +339,7 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let r_triangle: Element<Message> = 
+        let r_triangle = 
             radio(
                 "Right Triangle",
                 Widget::RightTriangle,
@@ -300,9 +349,11 @@ impl Example {
 
         let mode = self.state.draw_mode.string();
 
-        let draw_mode: Element<Message> = text(format!("Mode = {}", mode)).into();
+        let draw_mode = 
+            text(format!("Mode = {}", mode))
+            .into();
 
-        let del_last: Element<Message> = 
+        let del_last = 
             button("Delete Last")
                 .on_press(Message::DeleteLast)
                 .into();
@@ -316,51 +367,61 @@ impl Example {
             "White".to_string(),
             ];
 
-        let colors: Element<Message> = 
+        let colors = 
             pick_list(
                 color_opt, 
                 self.state.selected_color_str.clone(), 
                 Message::ColorSelected).into();
 
-        let widths: Element<Message> = text(format!("widths = {}", 2.0)).into();
+        let widths = text(format!("widths = {}", 2.0)).into();
 
-        let poly_pts_input: Element<Message> = 
+        let poly_pts_input = 
             text_input("Poly Points(3)", 
                         &self.state.selected_poly_points_str)
                 .on_input(Message::PolyInput)
                 .into();
 
-        let mode_options = vec!["None".to_string(), "New".to_string(), "Edit".to_string(), "Rotate".to_string()];
-        let mode: Element<Message> = 
+        let mode_options = 
+            vec![
+                "None".to_string(), 
+                "New".to_string(), 
+                "Edit".to_string(), 
+                "Rotate".to_string()
+                ];
+
+        let mode = 
         pick_list(
             mode_options, 
             Some(self.state.draw_mode.string()), 
             Message::ModeSelected).into();
 
-        let save: Element<Message> = 
+        let save = 
             button("Save")
                 .padding(5.0)
                 .on_press(Message::Save)
                 .into();
 
-        let load: Element<Message>  = 
+        let load = 
             button("Load")
                 .padding(5.0)
                 .on_press(Message::Load)
                 .into();
         
-        let load_save_row: Element<Message> = 
+        let load_save_row = 
             row(vec![load, save])
                 .spacing(5.0)
                 .into();
 
-        let instructions: Element<Message> = 
+        let instructions = 
             text("Start:\n Select a curve.\n\nDraw:\nUse left mouse button, click and move move then click again.\n\nCancel Draw:\nHold down esc and press left mouse button to cancel drawing.").into();
          
-        let col: Element<Message> = 
-            column(vec![clear_btn, 
+        let col = 
+            column(vec![
+            clear_btn,
+            arc, 
             biezer, 
-            circle, 
+            circle,
+            eliptical, 
             line,
             polygon,
             polyline,
@@ -472,6 +533,22 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     edit_curve_index: None,
                 })
             },
+            Widget::Arc => {
+                let point = points[1].clone();
+                let arc = Arc {
+                    points: points,
+                    mid_point,
+                    radius: 0.0,
+                    color,
+                    width,
+                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    draw_mode,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Arc(arc),
+                    edit_curve_index: None,
+                });
+            },
             Widget::Bezier => {
                 let point = points[1].clone();
                 let bz = Bezier {
@@ -488,6 +565,20 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 });
             },
             Widget::Circle => {
+                let cir = Circle {
+                    center: mid_point,
+                    circle_point: convert_to_point(&widget.points[0]),
+                    radius: widget.mid_point.distance(widget.points[0]),
+                    color,
+                    width,
+                    draw_mode,
+                };
+                vec_dc.push(DrawCurve {
+                    widget: CanvasWidget::Circle(cir),
+                    edit_curve_index: None,
+                });
+            },
+            Widget::Ellipse => {
                 let cir = Circle {
                     center: mid_point,
                     circle_point: convert_to_point(&widget.points[0]),
@@ -593,11 +684,17 @@ fn convert_to_export(curves: &[DrawCurve]) -> Vec<ExportWidget> {
                 CanvasWidget::None => {
                     (Widget::None, &vec![], Point::default(), Point::default(), 0, Color::TRANSPARENT, 0.0,)
                 },
+                CanvasWidget::Arc(arc) => {
+                    (Widget::Arc, &arc.points, arc.mid_point, Point::default(), 0, arc.color, arc.width)
+                },
                 CanvasWidget::Bezier(bz) => {
                     (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.color, bz.width)
                 },
                 CanvasWidget::Circle(cir) => {
                     (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, cir.color, cir.width)
+                },
+                CanvasWidget::Ellipse(ell) => {
+                    (Widget::Ellipse, &vec![ell.ell_point], ell.center, ell.ell_point, 0, ell.color, ell.width)
                 },
                 CanvasWidget::Line(ln) => {
                     (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.color, ln.width)
