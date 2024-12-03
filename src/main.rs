@@ -12,7 +12,7 @@ use iced::{event, keyboard, Color, Element, Event, Point, Radians, Subscription,
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_vertical_angle_of_vector, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_angle_of_vectors, get_vertical_angle_of_vector, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
 
 
@@ -106,7 +106,8 @@ impl Example {
                                     radius: 0.0,
                                     color: self.state.selected_color,
                                     width: self.state.draw_width,
-                                    degrees: 0.0,
+                                    start_angle: Radians::from(0.0),
+                                    end_angle: Radians::from(0.0),
                                     draw_mode: self.state.draw_mode,
                                 }
                             );
@@ -534,14 +535,25 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 })
             },
             Widget::Arc => {
-                let point = points[1].clone();
+                let start_angle = 
+                    get_angle_of_vectors(
+                        points[0], 
+                        Point::new(-points[0].x, points[0].y), points[1]
+                    )+Radians::PI;
+                let end_angle = 
+                    get_angle_of_vectors(
+                        points[0], 
+                        points[1], 
+                        points[2],
+                    )+Radians::PI;
                 let arc = Arc {
                     points: points,
                     mid_point,
                     radius: 0.0,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    start_angle,
+                    end_angle,
                     draw_mode,
                 };
                 vec_dc.push(DrawCurve {
