@@ -12,7 +12,7 @@ use iced::{event, keyboard, Color, Element, Event, Point, Radians, Subscription,
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_angle_of_vectors, get_vertical_angle_of_vector, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_angle_of_vectors, get_vertical_angle_of_vector, get_set_widget_draw_mode, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
 
 
@@ -48,12 +48,16 @@ enum Message {
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
-            Message::AddCurve(draw_curve) => {
-                if draw_curve.edit_curve_index.is_some() && 
-                    !self.curves.is_empty(){
-                    self.curves[draw_curve.edit_curve_index.unwrap()] = draw_curve.clone();
-                } else {
+            Message::AddCurve(mut draw_curve) => {
+                
+                let (draw_mode, cw_opt) = 
+                    get_set_widget_draw_mode(draw_curve.widget);
+                
+                if draw_mode == DrawMode::New {
+                    draw_curve.widget = cw_opt.unwrap();
                     self.curves.push(draw_curve);
+                } else {
+                    self.curves[draw_curve.index].widget = cw_opt.unwrap();
                 }
                 
                 self.state.request_redraw();
@@ -519,7 +523,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
     
     let mut vec_dc = vec![];
 
-    for widget in widgets.iter() {
+    for (index, widget) in widgets.iter().enumerate() {
         let points: Vec<Point> = widget.points.iter().map(|p| convert_to_point(p)).collect();
         let mid_point = convert_to_point(&widget.mid_point);
         let other_point = convert_to_point(&widget.other_point);
@@ -531,7 +535,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
             Widget::None => {
                 vec_dc.push(DrawCurve{
                     widget: CanvasWidget::None,
-                    edit_curve_index: None,
+                    index,
                 })
             },
             Widget::Arc => {
@@ -558,7 +562,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Arc(arc),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::Bezier => {
@@ -573,7 +577,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Bezier(bz),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::Circle => {
@@ -587,7 +591,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Circle(cir),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::Ellipse => {
@@ -601,7 +605,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Circle(cir),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::Line => {
@@ -616,7 +620,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Line(ln),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::Polygon => {
@@ -632,7 +636,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::Polygon(pg),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::PolyLine => {
@@ -648,7 +652,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::PolyLine(pl),
-                    edit_curve_index: None,
+                    index,
                 });
             },
             Widget::RightTriangle => {
@@ -664,7 +668,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                 };
                 vec_dc.push(DrawCurve {
                     widget: CanvasWidget::RightTriangle(tr),
-                    edit_curve_index: None,
+                    index,
                 });
             },
         }
