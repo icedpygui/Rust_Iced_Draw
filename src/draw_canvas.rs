@@ -1,6 +1,8 @@
 
+use std::collections::HashMap;
 use std::f32::consts::PI;
-// use std::sync::{Mutex, MutexGuard};
+use iced::widget::canvas::path::arc::Elliptical;
+use iced::widget::container::Id;
 use iced::{mouse, Color, Radians, Vector};
 use iced::widget::canvas::event::{self, Event};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
@@ -30,6 +32,12 @@ pub enum DrawMode {
     Rotate,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq,)]
+pub enum DrawStatus {
+    Inprogress,
+    Completed,
+}
+
 // used to display text widget
 impl DrawMode {
     pub fn string(&self) -> String {
@@ -56,16 +64,16 @@ impl DrawMode {
 pub struct State {
     cache: canvas::Cache,
     pub draw_mode: DrawMode,
-    pub draw_width: f32,
-    pub edit_widget_index: Option<usize>,
+    pub edit_widget_id: Option<Id>,
     pub escape_pressed: bool,
-    pub selected_widget: CanvasWidget,
     pub selected_radio_widget: Option<Widget>,
     pub selected_color: Color,
     pub selected_color_str: Option<String>,
     pub selected_poly_points: usize,
     pub selected_poly_points_str: String,
     pub selected_step_degrees: f32,
+    pub selected_width: f32,
+    pub selected_width_str: String,
 }
 
 impl Default for State {
@@ -73,22 +81,22 @@ impl Default for State {
         Self { 
                 cache: canvas::Cache::default(),
                 draw_mode: DrawMode::DrawAll,
-                draw_width: 2.0,
-                edit_widget_index: None,
+                edit_widget_id: None,
                 escape_pressed: false,
-                selected_widget: CanvasWidget::None,
                 selected_radio_widget: None,
                 selected_color: Color::WHITE,
-                selected_color_str: None,
+                selected_color_str: Some("White".to_string()),
                 selected_poly_points: 3,
                 selected_poly_points_str: "".to_string(),
                 selected_step_degrees: 6.0,
+                selected_width: 2.0,
+                selected_width_str: "".to_string(),
              }
         }
 }
 
 impl State {
-    pub fn view<'a>(&'a self, curves: &'a [DrawCurve]) -> Element<'a, DrawCurve> {
+    pub fn view<'a>(&'a self, curves: &'a HashMap<Id, CanvasWidget>) -> Element<'a, CanvasWidget> {
         Canvas::new(DrawPending {
             state: self,
             curves,
@@ -105,10 +113,10 @@ impl State {
 
 struct DrawPending<'a> {
     state: &'a State,
-    curves: &'a [DrawCurve],
+    curves: &'a HashMap<Id, CanvasWidget>,
 }
 
-impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
+impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
     type State = Option<Pending>;
 
     fn update(
@@ -117,7 +125,7 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
         event: Event,
         bounds: iced::Rectangle,
         cursor: mouse::Cursor,
-    ) -> (event::Status, Option<DrawCurve>) {
+    ) -> (event::Status, Option<CanvasWidget>) {
         let Some(cursor_position) = cursor.position_in(bounds) else {
             return (event::Status::Ignored, None);
         };
@@ -142,44 +150,30 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // 2 - find closest point
                                     // 3 - finish
                                     None => {
-                                        let index = None;
-                                        let mut closest = f32::INFINITY;
-                                        for (idx, curve) in self.curves.iter().enumerate() {
-                                            let distance: f32 = get_distance_to_mid_point(curve, cursor_position);
-                                            if distance < closest {
-                                                index = Some(idx);
-                                                closest = distance;
-                                            }
-                                        }
+                                        let widget_opt = find_closest_widget(self.curves, cursor_position);
                                         
-                                        if index.is_some() {
-                                            let selected_widget = 
-                                                self.curves[index.unwrap()].widget.clone();
-                                            
-                                            // set draw_mode to indicate being edited
-                                            let widget = 
-                                                set_widget_draw_mode(
-                                                    selected_widget, 
-                                                    DrawMode::Edit,
-                                                );
-                                            *program_state = Some(Pending::EditSecond {
-                                                widget: widget.clone(),
-                                                edit_point_index: None, 
-                                                edit_mid_point: false,
-                                                edit_other_point: false,
-                                            });
-                                            // returning DrawCurve so that the curve
-                                            // being editied will not show after the refresh
-                                            // The pending process will show the curve
-                                            // until its finsihed.
+                                        let selected_widget = 
+                                            match widget_opt {
+                                                Some(w) => w,
+                                                None => return (event::Status::Ignored, None),
+                                            };
 
-                                            Some(DrawCurve {
-                                                widget,
-                                                index: index.unwrap(),
-                                            })
-                                        } else {
-                                            None
-                                        }
+                                        // set draw_mode to indicate being edited
+                                        let widget = 
+                                            set_widget_mode_or_status(
+                                                selected_widget, 
+                                                Some(DrawMode::Edit),
+                                                Some(DrawStatus::Inprogress),
+                                            );
+                                        *program_state = Some(Pending::EditSecond {
+                                            widget: widget.clone(),
+                                        });
+                                        // returning DrawCurve so that the curve
+                                        // being editied will not show after the refresh
+                                        // The pending process will show the curve
+                                        // until its finsihed.
+
+                                        Some(widget)
                                     },
                                     // The second click is a Some() since it was created above
                                     // The pending is carrying the previous info
@@ -187,9 +181,6 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     // and replace with cursor
                                     Some(Pending::EditSecond { 
                                         widget,
-                                        edit_point_index: _, 
-                                        edit_mid_point: _,
-                                        edit_other_point: _,
                                     }) => {
                                         // Find for closest point to edit in selected widget
                                         // which might be either a mid point(translate) or 
@@ -216,39 +207,37 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                     }) => {
 
                                         let new_widget: CanvasWidget = 
-                                                update_widget(
+                                                update_edited_widget(
                                                     widget.clone(), 
                                                     cursor_position, 
                                                     *edit_point_index, 
                                                     *edit_mid_point,
                                                     *edit_other_point,
+                                                    DrawStatus::Completed,
                                                 );
                                         
-                                        
                                         *program_state = None;
-                                        Some(DrawCurve {
-                                            widget: new_widget,
-                                            index: index.unwrap(),
-                                        })
+                                        Some(new_widget)
                                     },
                                     _ => None,
                                 }
                             },
                             DrawMode::New => {
-                                let mut index = 0;
                                 match program_state {
                                     // First mouse click sets the state of the first Pending point
                                     // return a none since no Curve yet
                                     None => {
                                         // in case the poly points, color, and width have changed since 
                                         // the widget selected
-                                        index = self.curves.len();
+                                        if self.state.selected_radio_widget.is_none() {
+                                            return (event::Status::Ignored, None)
+                                        }
                                         let selected_widget = 
                                             add_new_widget(
-                                                self.state.selected_widget.clone(), 
+                                                self.state.selected_radio_widget.unwrap(), 
                                                 self.state.selected_poly_points,
                                                 self.state.selected_color,
-                                                self.state.draw_width,
+                                                self.state.selected_width,
                                                 self.state.draw_mode,
                                             );
 
@@ -271,128 +260,11 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         let (widget, completed) = 
                                             set_widget_point(widget, cursor_position);
                                         
-                                        // if completed, we return the Curve and set the state to none
+                                        // if completed, we return the CanvasWidget and set the state to none
                                         // if not, then this is repeated until completed.
                                         if completed {
                                             *program_state = None;
-                                            match widget {
-                                                CanvasWidget::None => {
-                                                    None
-                                                },
-                                                CanvasWidget::Arc(arc) => {
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::Arc(arc),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::Bezier(mut bz) => {
-                                                    bz.mid_point = 
-                                                        get_mid_point(
-                                                            bz.points[0], 
-                                                            bz.points[1]
-                                                        );
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::Bezier(bz),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::Circle(cir) => { 
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::Circle(cir),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::Ellipse(ell) => {
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::Ellipse(ell),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::Line(mut ln) => {
-                                                    // degree is angle rotation around mid point 
-                                                    let degrees = 
-                                                        get_vertical_angle_of_vector(
-                                                            ln.points[0],
-                                                            ln.points[1], 
-                                                        );
-                                                    ln.degrees = degrees;
-
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::Line(ln),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::Polygon(mut pg) => {
-                                                    pg.pg_point = cursor_position;
-                                                    let degrees = 
-                                                        get_vertical_angle_of_vector(
-                                                            pg.mid_point, 
-                                                            cursor_position, 
-                                                            );
-
-                                                    pg.degrees = degrees;
-                                                    pg.points = 
-                                                        build_polygon(
-                                                            pg.mid_point, 
-                                                            pg.pg_point, 
-                                                            pg.poly_points,
-                                                            pg.degrees,
-                                                        );
-                                                    
-                                                    Some(DrawCurve {
-                                                        widget:CanvasWidget::Polygon(pg),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::PolyLine(mut pl) => {
-                                                    let (slope, intercept) =
-                                                        get_linear_regression(&pl.points);
-                                                    
-                                                    let line = 
-                                                        get_line_from_slope_intercept(
-                                                            &pl.points, 
-                                                            slope, 
-                                                            intercept
-                                                        );
-                                                    pl.mid_point = 
-                                                        get_mid_point(
-                                                            line.0, 
-                                                            line.1);
-                                                    pl.pl_point = 
-                                                        Point::new(
-                                                            pl.mid_point.x + 100.0, 
-                                                            pl.mid_point.y
-                                                        );
-                                                    pl.degrees = 
-                                                        get_vertical_angle_of_vector(
-                                                            pl.mid_point,
-                                                            pl.pl_point,
-                                                        );
-                                                   
-                                                    Some(DrawCurve{
-                                                        widget: CanvasWidget::PolyLine(pl),
-                                                        index,
-                                                    })
-                                                },
-                                                CanvasWidget::RightTriangle(mut tr) => {
-                                                    tr.mid_point = 
-                                                        get_mid_geometry(
-                                                            &tr.points, 
-                                                            Widget::RightTriangle
-                                                        );
-                                                    tr.tr_point = 
-                                                        Point::new(
-                                                            tr.mid_point.x+100.0, 
-                                                            tr.mid_point.y
-                                                        );
-                                                    tr.degrees = 90.0;
-                                                    Some(DrawCurve {
-                                                        widget: CanvasWidget::RightTriangle(tr),
-                                                        index,
-                                                    })
-                                                },
-                                            }
-                                            
+                                            complete_new_widget(widget, cursor_position)
                                         } else {
                                             *program_state = Some(Pending::New {
                                                 widget,
@@ -404,59 +276,42 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                 }
                             },
                             DrawMode::Rotate => {
-                                let mut index = None;
                                 match program_state {
                                     // rotation consists of 2 clicks
                                     // 1 - find closest widget
                                     //  - move mouse wheel
                                     // 2 - click to finish
                                     None => {
-                                        let mut closest = 1_000_000_f32;
-                                        for (idx, curve) in 
-                                            self.curves.iter().enumerate() {
-                                            let distance: f32 = 
-                                                get_distance_to_mid_point(
-                                                    curve, 
-                                                    cursor_position
-                                                );
-                                            if distance < closest {
-                                                index = Some(idx);
-                                                closest = distance;
-                                            }
-                                        }
+                                        let widget_opt = find_closest_widget(self.curves, cursor_position);
                                         
-                                        if index.is_some() {
+                                        let selected_widget = 
+                                            match widget_opt {
+                                                Some(w) => w,
+                                                None => return (event::Status::Ignored, None),
+                                            };
+                                        
+                                        // The widget needs to be in DrawAll initially, 
+                                        // in order to display it in pending
+                                        // However, the below return of the draw curve 
+                                        // the widget need to ne in the rotate method.
+                                        let widget = 
+                                            set_widget_mode_or_status(
+                                                selected_widget, 
+                                                Some(DrawMode::Rotate),
+                                                Some(DrawStatus::Inprogress),
+                                            );
+                                        
+                                        *program_state = Some(Pending::Rotate {
+                                            widget: widget.clone(),
+                                            step_degrees: self.state.selected_step_degrees,
+                                            degrees: get_widget_degrees(&widget),
+                                        });
 
-                                            let selected_widget = 
-                                                self.curves[index.unwrap()].widget.clone();
-
-                                            // The widget needs to be in DrawAll initially, 
-                                            // in order to display it in pending
-                                            // However, the below return of the draw curve 
-                                            // the widget need to ne in the rotate method.
-                                            let widget = 
-                                                set_widget_draw_mode(
-                                                    selected_widget, 
-                                                    DrawMode::Rotate,
-                                                );
-                                            
-                                            *program_state = Some(Pending::Rotate {
-                                                widget: widget.clone(),
-                                                step_degrees: self.state.selected_step_degrees,
-                                                degrees: get_widget_degrees(&widget),
-                                            });
-
-                                            // returning DrawCurve so that the curve
-                                            // being editied will not show after the refresh
-                                            // The pending process will show the curve
-                                            // until its finsihed.
-                                            Some(DrawCurve {
-                                                widget,
-                                                index: index.unwrap(),
-                                            })
-                                        } else {
-                                            None
-                                        }
+                                        // returning CanvasWidget so that the curve
+                                        // being editied will not show after the refresh
+                                        // The pending process will show the curve
+                                        // until its finsihed.
+                                        Some(widget)
                                     },
                                     // After the final rotation completed
                                     Some(Pending::Rotate {
@@ -468,14 +323,12 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                             update_rotated_widget(
                                                 widget,
                                                 0.0,
+                                                Some(DrawStatus::Completed),
                                             );
 
                                         *program_state = None;
 
-                                        Some(DrawCurve {
-                                            widget: rotated_widget,
-                                            index: index.unwrap(),
-                                        })
+                                        Some(rotated_widget)
                                     },
                                     _ => None,
                                 }
@@ -501,11 +354,11 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
                                         // since it was set to DrawAll initially.
                                         // Otherwise needed to have another pending type
                                         // and duplicate a lot of code.  Had to clone anyway.
-                                        
                                         let (widget, degrees) = 
                                             update_rotated_widget(
                                                 widget, 
-                                                *step_degrees*delta, 
+                                                *step_degrees*delta,
+                                                None, 
                                             );
                                         
                                         *program_state = Some(Pending::Rotate{
@@ -574,27 +427,24 @@ impl<'a> canvas::Program<DrawCurve> for DrawPending<'a> {
 
 #[derive(Debug, Clone, Default)]
 pub struct DrawCurve {
-    pub index: usize,
-    pub widget: CanvasWidget,
 }
 
 impl DrawCurve {
-    fn draw_all(curves: &[DrawCurve], frame: &mut Frame, _theme: &Theme) {
+    fn draw_all(curves: &HashMap<Id, CanvasWidget>, frame: &mut Frame, _theme: &Theme) {
         // This draw only occurs at the completion of the 
         // widget(update occurs) and cache is cleared
         
-        for draw_curve in curves.iter() {
+        for (_id, widget) in curves.iter() {
             // if first click, skip the curve to be edited so that it 
             // will not be seen until the second click.  Otherwise is shows
             // during editing because there is no way to refresh
             // The pending routine will diplay the curve
 
             let (path, color, width) = 
-                match &draw_curve.widget {
+                match &widget {
                     CanvasWidget::Arc(arc) => {
                         // skip if being editied or rotated
-                        if arc.draw_mode == DrawMode::Edit || 
-                            arc.draw_mode == DrawMode::Rotate {
+                        if arc.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _,_) = 
@@ -611,8 +461,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::Bezier(bz) => {
                         // skip if being editied or rotated
-                        if bz.draw_mode == DrawMode::Edit || 
-                            bz.draw_mode == DrawMode::Rotate {
+                        if bz.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _) = 
@@ -630,8 +479,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::Circle(cir) => {
                         // skip if being editied or rotated
-                        if cir.draw_mode == DrawMode::Edit  || 
-                            cir.draw_mode == DrawMode::Rotate {
+                        if cir.status== DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let path = 
@@ -647,8 +495,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::Ellipse(ell) => {
                         // skip if being editied or rotated
-                        if ell.draw_mode == DrawMode::Edit  || 
-                            ell.draw_mode == DrawMode::Rotate {
+                        if ell.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let path = 
@@ -664,8 +511,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::Line(line) => {
                         // skip if being editied or rotated
-                        if line.draw_mode == DrawMode::Edit  || 
-                            line.draw_mode == DrawMode::Rotate {
+                        if line.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _) = build_line_path(
@@ -682,8 +528,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::PolyLine(pl) => {
                         // skip if being editied or rotated
-                        if pl.draw_mode == DrawMode::Edit  || 
-                            pl.draw_mode == DrawMode::Rotate {
+                        if pl.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _) = build_polyline_path(
@@ -700,8 +545,7 @@ impl DrawCurve {
                     },
                     CanvasWidget::Polygon(pg) => {
                         // skip if being editied or rotated
-                        if pg.draw_mode == DrawMode::Edit  || 
-                            pg.draw_mode == DrawMode::Rotate {
+                        if pg.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _) = 
@@ -719,8 +563,7 @@ impl DrawCurve {
                     }
                     CanvasWidget::RightTriangle(tr) => {
                         // skip if being editied or rotated
-                        if tr.draw_mode == DrawMode::Edit  || 
-                            tr.draw_mode == DrawMode::Rotate {
+                        if tr.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
                             let (path, _, _, _) = build_right_triangle_path(
@@ -760,9 +603,6 @@ enum Pending {
     },
     EditSecond {
         widget: CanvasWidget, 
-        edit_point_index: Option<usize>, 
-        edit_mid_point: bool,
-        edit_other_point: bool,
         },
     EditThird {
         widget: CanvasWidget, 
@@ -842,6 +682,17 @@ impl Pending {
                                 );
                             (path, cir.color, cir.width, None, None)
                         },
+                        CanvasWidget::Ellipse(ell) => {
+                            let path = 
+                                build_ellipse_path(
+                                    ell, 
+                                    DrawMode::New, 
+                                    Some(cursor),
+                                    None,
+                                    false,
+                                );
+                            (path, ell.color, ell.width, None, Some(ell.points[0]))
+                        }
                         CanvasWidget::Line(line) => {
                             let (path, degrees, _) = 
                                 build_line_path(
@@ -919,10 +770,120 @@ impl Pending {
                 },
                 Pending::EditSecond{
                     widget, 
-                    edit_point_index, 
-                    edit_mid_point,
-                    edit_other_point,
-                } | Pending::EditThird { 
+                } => {
+                    let (path, color, width) = 
+                        match widget {
+                            CanvasWidget::None => {
+                                (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
+                            },
+                            CanvasWidget::Arc(arc) => {
+                                let (path, _, _, _) = 
+                                build_arc_path(
+                                    arc, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None,
+                                    false,
+                                );
+
+                                (path, arc.color, arc.width)
+                            },
+                            CanvasWidget::Bezier(bz) => {
+                                let (path, _, _) = 
+                                build_bezier_path(
+                                    bz, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None, 
+                                    false,
+                                    None,
+                                );
+                           
+                                (path, bz.color, bz.width)
+                            },
+                            CanvasWidget::Circle(cir) => {
+                                let path = 
+                                build_circle_path(
+                                    cir, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None, 
+                                    false,
+                                );
+                                (path, cir.color, cir.width)
+                            },
+                            CanvasWidget::Ellipse(ell) => {
+                                let path = 
+                                build_ellipse_path(
+                                    ell, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None, 
+                                    false,
+                                );
+                                (path, ell.color, ell.width)
+                            },
+                            CanvasWidget::Line(line) => {
+                                let (path, _, _) = 
+                                build_line_path(
+                                    line, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None, 
+                                    false,
+                                    None,
+                                );
+                            
+                                (path, line.color, line.width)
+                            },
+                            CanvasWidget::Polygon(pg) => {
+                                let (path, _, _) = 
+                                build_polygon_path(
+                                    pg, 
+                                    DrawMode::Edit, 
+                                    Some(cursor), 
+                                    false,
+                                    false,
+                                    None,
+                                );
+                                (path, pg.color, pg.width)
+                            },
+                            CanvasWidget::PolyLine(pl) => {
+                                let (path, _, _) = 
+                                    build_polyline_path(
+                                        pl, 
+                                        DrawMode::Edit, 
+                                        Some(cursor),
+                                        None, 
+                                        false,
+                                        false,
+                                        None,
+                                    );
+                                (path, pl.color, pl.width)
+                            },
+                            CanvasWidget::RightTriangle(tr) => {
+                                let (path, _, _, _) = 
+                                build_right_triangle_path(
+                                    tr, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    None, 
+                                    false,
+                                    false,
+                                    None,
+                                );
+                                (path, tr.color, tr.width)
+                            },
+                        };
+
+                    frame.stroke(
+                    &path,
+                    Stroke::default()
+                        .with_width(width)
+                        .with_color(color),
+                    );
+                },
+                Pending::EditThird { 
                     widget,
                     edit_point_index, 
                     edit_mid_point, 
@@ -1195,6 +1156,7 @@ impl Pending {
 
 #[derive(Debug, Clone)]
 pub struct Arc {
+    pub id: Id,
     pub points: Vec<Point>,
     pub mid_point: Point,
     pub radius: f32,
@@ -1203,55 +1165,62 @@ pub struct Arc {
     pub start_angle: Radians,
     pub end_angle: Radians,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Bezier {
+    pub id: Id,
     pub points: Vec<Point>,
     pub mid_point: Point,
     pub color: Color,
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Circle {
+    pub id: Id,
     pub center: Point,
     pub circle_point: Point,
     pub radius: f32,
     pub color: Color,
     pub width: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
 #[derive(Debug, Clone)]
 pub struct Ellipse {
+    pub id: Id,
     pub points: Vec<Point>,
-    pub ell_point: Point,
     pub center: Point,
     pub radii: Vector,
     pub rotation: Radians,
-    pub start_angle: Radians,
-    pub end_angle: Radians,
     pub color: Color,
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Line {
+    pub id: Id,
     pub points: Vec<Point>,
     pub mid_point: Point,
     pub color: Color,
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PolyLine {
+    pub id: Id,
     pub points: Vec<Point>,
     pub poly_points: usize,
     pub mid_point: Point,
@@ -1260,10 +1229,12 @@ pub struct PolyLine {
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Polygon {
+    pub id: Id,
     pub points: Vec<Point>,
     pub poly_points: usize,
     pub mid_point: Point,
@@ -1272,10 +1243,12 @@ pub struct Polygon {
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RightTriangle {
+    pub id: Id,
     pub points: Vec<Point>,
     pub mid_point: Point,
     pub tr_point: Point,
@@ -1283,6 +1256,7 @@ pub struct RightTriangle {
     pub width: f32,
     pub degrees: f32,
     pub draw_mode: DrawMode,
+    pub status: DrawStatus,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq,)]
@@ -1298,74 +1272,242 @@ pub enum Widget {
     RightTriangle,
 }
 
-fn add_new_widget(widget: CanvasWidget, 
+fn add_new_widget(widget: Widget, 
                     poly_points: usize, 
-                    selected_color: Color,
-                    selected_width: f32,
+                    color: Color,
+                    width: f32,
                     draw_mode: DrawMode) 
                     -> CanvasWidget {
     match widget {
-        CanvasWidget::None => {
+        Widget::None => {
             CanvasWidget::None
         },
-        CanvasWidget::Arc(mut arc) => {
-            arc.color = selected_color;
-            arc.width = selected_width;
-            arc.draw_mode = draw_mode;
-            CanvasWidget::Arc(arc)
+        Widget::Arc => {
+            CanvasWidget::Arc(
+                Arc {
+                    id: Id::unique(),
+                    points: vec![],
+                    mid_point: Point::default(),
+                    radius: 0.0,
+                    color,
+                    width,
+                    start_angle: Radians::PI,
+                    end_angle: Radians::PI,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                })
+        
         },
-        CanvasWidget::Bezier(mut bz) => {
-            bz.color = selected_color;
-            bz.width = selected_width;
-            bz.draw_mode = draw_mode;
-            CanvasWidget::Bezier(bz)
+        Widget::Bezier => {
+            CanvasWidget::Bezier(
+                Bezier { 
+                    id: Id::unique(),
+                    points: vec![],
+                    mid_point: Point::default(),
+                    color, 
+                    width, 
+                    degrees: 0.0, 
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::Circle(mut cir) => {
-            cir.color = selected_color;
-            cir.width = selected_width;
-            cir.draw_mode = draw_mode;
-            CanvasWidget::Circle(cir)
+        Widget::Circle => {
+            CanvasWidget::Circle(
+                Circle {
+                    id: Id::unique(),
+                    center: Point::default(),
+                    circle_point: Point::default(),
+                    radius: 0.0,
+                    color,
+                    width,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::Ellipse(mut ell) => {
-            ell.color = selected_color;
-            ell.width = selected_width;
-            ell.draw_mode = draw_mode;
-            CanvasWidget::Ellipse(ell)
+        Widget::Ellipse => {
+            CanvasWidget::Ellipse(
+                Ellipse {
+                    id: Id::unique(),
+                    points: vec![],
+                    center: Point::default(),
+                    radii: Vector{x: 0.0, y: 0.0},
+                    rotation: Radians(0.0),
+                    color,
+                    width,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::Line(mut ln) => {
-            ln.color = selected_color;
-            ln.width = selected_width;
-            ln.draw_mode = draw_mode;
-            CanvasWidget::Line(ln)
+        Widget::Line => {
+            CanvasWidget::Line(
+                Line {
+                    id: Id::unique(),
+                    points: vec![],
+                    mid_point: Point::default(),
+                    color,
+                    width,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::PolyLine(mut pl) => {
-            pl.color = selected_color;
-            pl.width = selected_width;
-            pl.poly_points = poly_points;
-            pl.draw_mode = draw_mode;
-            CanvasWidget::PolyLine(pl)
+        Widget::PolyLine => {
+            CanvasWidget::PolyLine(
+                PolyLine {
+                    id: Id::unique(),
+                    points: vec![],
+                    poly_points,
+                    mid_point: Point::default(),
+                    pl_point: Point::default(),
+                    color,
+                    width,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::Polygon(mut pg) => {
-            pg.color = selected_color;
-            pg.width = selected_width;
-            pg.poly_points = poly_points;
-            pg.draw_mode = draw_mode;
-            CanvasWidget::Polygon(pg)
+        Widget::Polygon => {
+            CanvasWidget::Polygon(
+                Polygon {
+                    id: Id::unique(),
+                    points: vec![],
+                    poly_points,
+                    mid_point: Point::default(),
+                    pg_point: Point::default(),
+                    color,
+                    width,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
-        CanvasWidget::RightTriangle(mut tr) => {
-            tr.color = selected_color;
-            tr.width = selected_width;
-            tr.draw_mode = draw_mode;
-            CanvasWidget::RightTriangle(tr)
+        Widget::RightTriangle => {
+            CanvasWidget::RightTriangle(
+                RightTriangle {
+                    id: Id::unique(),
+                    points: vec![],
+                    mid_point: Point::default(),
+                    tr_point: Point::default(),
+                    color,
+                    width,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
         },
     }
 }
 
-fn update_widget(widget: CanvasWidget,
+fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidget> {
+    match widget {
+        CanvasWidget::None => {
+            None
+        },
+        CanvasWidget::Arc(arc) => {
+            Some(CanvasWidget::Arc(arc))
+        },
+        CanvasWidget::Bezier(mut bz) => {
+            bz.mid_point = 
+                get_mid_point(
+                    bz.points[0], 
+                    bz.points[1]
+                );
+            Some(CanvasWidget::Bezier(bz))
+        },
+        CanvasWidget::Circle(cir) => { 
+            Some(CanvasWidget::Circle(cir))
+        },
+        CanvasWidget::Ellipse(ell) => {
+            Some(CanvasWidget::Ellipse(ell))
+        },
+        CanvasWidget::Line(mut ln) => {
+            // degree is angle rotation around mid point 
+            let degrees = 
+                get_horizontal_angle_of_vector(
+                    ln.points[0],
+                    ln.points[1], 
+                );
+            ln.degrees = degrees;
+
+            Some(CanvasWidget::Line(ln))
+        },
+        CanvasWidget::Polygon(mut pg) => {
+            pg.pg_point = cursor;
+            let degrees = 
+                get_horizontal_angle_of_vector(
+                    pg.mid_point, 
+                    cursor, 
+                    );
+
+            pg.degrees = degrees;
+            pg.points = 
+                build_polygon(
+                    pg.mid_point, 
+                    pg.pg_point, 
+                    pg.poly_points,
+                    pg.degrees,
+                );
+            
+            Some(CanvasWidget::Polygon(pg))
+        },
+        CanvasWidget::PolyLine(mut pl) => {
+            let (slope, intercept) =
+                get_linear_regression(&pl.points);
+            
+            let line = 
+                get_line_from_slope_intercept(
+                    &pl.points, 
+                    slope, 
+                    intercept
+                );
+            pl.mid_point = 
+                get_mid_point(
+                    line.0, 
+                    line.1);
+            pl.pl_point = 
+                Point::new(
+                    pl.mid_point.x + 100.0, 
+                    pl.mid_point.y
+                );
+            pl.degrees = 
+                get_horizontal_angle_of_vector(
+                    pl.mid_point,
+                    pl.pl_point,
+                );
+            
+            Some(CanvasWidget::PolyLine(pl))
+        },
+        CanvasWidget::RightTriangle(mut tr) => {
+            tr.mid_point = 
+                get_mid_geometry(
+                    &tr.points, 
+                    Widget::RightTriangle
+                );
+            tr.tr_point = 
+                Point::new(
+                    tr.mid_point.x+100.0, 
+                    tr.mid_point.y
+                );
+            tr.degrees = 90.0;
+            Some(CanvasWidget::RightTriangle(tr))
+        },
+    }
+}
+
+fn update_edited_widget(widget: CanvasWidget,
                         cursor: Point, 
                         index: Option<usize>, 
                         mid_point: bool,
                         other_point: bool,
+                        status: DrawStatus,
                     ) -> CanvasWidget {
     match widget {
         CanvasWidget::None => {
@@ -1376,7 +1518,7 @@ fn update_widget(widget: CanvasWidget,
                 arc.points[index.unwrap()] = cursor;
                 if index.unwrap() == 1 {
                     arc.start_angle = Radians::from(
-                    get_vertical_angle_of_vector(
+                    get_horizontal_angle_of_vector(
                         arc.points[0],
                         arc.points[1], 
                     ));
@@ -1398,7 +1540,7 @@ fn update_widget(widget: CanvasWidget,
                         );
                 arc.mid_point = cursor;
             }
-            
+            arc.status = status;
             CanvasWidget::Arc(arc)
         },
         CanvasWidget::Bezier(mut bz) => {
@@ -1415,12 +1557,12 @@ fn update_widget(widget: CanvasWidget,
                 bz.mid_point = cursor;
             }
             let degrees = 
-                get_vertical_angle_of_vector(
+                get_horizontal_angle_of_vector(
                     bz.points[0],
                     bz.points[1], 
                 );
             bz.degrees = degrees;
-
+            bz.status = status;
             CanvasWidget::Bezier(bz)
         },
         CanvasWidget::Circle(mut cir) => {
@@ -1438,15 +1580,12 @@ fn update_widget(widget: CanvasWidget,
                 cir.center = cursor;
                 cir.circle_point = points[0];
             }
-
+            cir.status = status;
             CanvasWidget::Circle(cir)
         },
         CanvasWidget::Ellipse(mut ell) => {
-            if index.is_some() {
-                ell.ell_point = cursor;
-                // ell.radii = ell.center.distance(cursor);
-            } else if mid_point {
-                let mut points = vec![ell.ell_point];
+           if mid_point {
+                let mut points = vec![ell.center];
                 points = 
                     translate_geometry(
                         points, 
@@ -1454,9 +1593,8 @@ fn update_widget(widget: CanvasWidget,
                         ell.center,
                     );
                 ell.center = cursor;
-                ell.ell_point = points[0];
             }
-
+            ell.status = status;
             CanvasWidget::Ellipse(ell)
         },
         CanvasWidget::Line(mut line) => {
@@ -1474,18 +1612,18 @@ fn update_widget(widget: CanvasWidget,
             }
 
             let degrees = 
-                get_vertical_angle_of_vector(
+                get_horizontal_angle_of_vector(
                     line.points[0],  
                     line.points[1], 
                 );
             line.degrees = degrees;
-
+            line.status = status;
             CanvasWidget::Line(line)
         },
         CanvasWidget::Polygon(mut pg) => {
             if other_point {
                 pg.pg_point = cursor;
-                pg.degrees = get_vertical_angle_of_vector(pg.mid_point, cursor);
+                pg.degrees = get_horizontal_angle_of_vector(pg.mid_point, cursor);
                 pg.points = 
                     build_polygon(
                         pg.mid_point, 
@@ -1510,7 +1648,7 @@ fn update_widget(widget: CanvasWidget,
                 pg.mid_point = cursor;
                 pg.pg_point = trans_pts[0];
             }
-
+            pg.status = status;
             CanvasWidget::Polygon(pg)
         },
         CanvasWidget::PolyLine(mut pl) => {
@@ -1529,7 +1667,7 @@ fn update_widget(widget: CanvasWidget,
                     )[0];
                 pl.mid_point = mid_point;
                 pl.degrees = 
-                    get_vertical_angle_of_vector(
+                    get_horizontal_angle_of_vector(
                         pl.mid_point, 
                         pl.pl_point
                     );
@@ -1546,13 +1684,13 @@ fn update_widget(widget: CanvasWidget,
                 pl.pl_point = pts.pop().unwrap();
                 pl.points = pts;
             } else if other_point {
-                let degrees = get_vertical_angle_of_vector(pl.mid_point, cursor);
+                let degrees = get_horizontal_angle_of_vector(pl.mid_point, cursor);
                 let step_degrees = degrees-pl.degrees;
                 pl.points = rotate_geometry(&pl.points, &pl.mid_point, &step_degrees, Widget::PolyLine);
                 pl.pl_point = cursor;
                 pl.degrees = degrees;
             }
-
+            pl.status = status;
             CanvasWidget::PolyLine(pl)
         },
         CanvasWidget::RightTriangle(mut tr) => {
@@ -1583,13 +1721,13 @@ fn update_widget(widget: CanvasWidget,
                 tr.tr_point = pts.pop().unwrap();
                 tr.points = pts;
             } else if other_point {
-                let degrees = get_vertical_angle_of_vector(tr.mid_point, cursor);
+                let degrees = get_horizontal_angle_of_vector(tr.mid_point, cursor);
                 let step_degrees = degrees-tr.degrees;
                 tr.points = rotate_geometry(&tr.points, &tr.mid_point, &step_degrees, Widget::RightTriangle);
                 tr.tr_point = cursor;
                 tr.degrees = degrees;
             }
-
+            tr.status = status;
             CanvasWidget::RightTriangle(tr)
         },
     }
@@ -1597,17 +1735,24 @@ fn update_widget(widget: CanvasWidget,
 
 fn update_rotated_widget(widget: &mut CanvasWidget, 
                         step_degrees: f32,
+                        status: Option<DrawStatus>,
                     ) -> (CanvasWidget, f32) {
     match widget {
         CanvasWidget::None => (CanvasWidget::None, 0.0),
         CanvasWidget::Arc(arc) => {
             arc.points = rotate_geometry(&arc.points, &arc.mid_point, &step_degrees, Widget::Arc);
-            arc.start_angle = Radians::from(get_vertical_angle_of_vector(arc.mid_point, arc.points[1]));
+            arc.start_angle = Radians::from(get_horizontal_angle_of_vector(arc.mid_point, arc.points[1]));
+            if status.is_some() {
+                arc.status = status.unwrap();
+            }
             (CanvasWidget::Arc(arc.clone()), Radians::into(arc.start_angle))
         },
         CanvasWidget::Bezier(bz) => {
             bz.points = rotate_geometry(&bz.points, &bz.mid_point, &step_degrees, Widget::Bezier);
-            bz.degrees = get_vertical_angle_of_vector(bz.mid_point, bz.points[1]);
+            bz.degrees = get_horizontal_angle_of_vector(bz.mid_point, bz.points[1]);
+            if status.is_some() {
+                bz.status = status.unwrap();
+            }
             (CanvasWidget::Bezier(bz.clone()), bz.degrees)
         },
         CanvasWidget::Circle(cir) => {
@@ -1618,13 +1763,19 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
         },
         CanvasWidget::Line(ln) => {
             ln.points = rotate_geometry(&ln.points, &ln.mid_point, &step_degrees, Widget::Line);
-            ln.degrees = get_vertical_angle_of_vector(ln.mid_point, ln.points[1]);
+            ln.degrees = get_horizontal_angle_of_vector(ln.mid_point, ln.points[1]);
+            if status.is_some() {
+                ln.status = status.unwrap();
+            }
             (CanvasWidget::Line(ln.clone()), ln.degrees)
         },
         CanvasWidget::Polygon(pg) => {
             pg.points = rotate_geometry(&pg.points, &pg.mid_point, &step_degrees, Widget::Polygon);
             pg.pg_point = rotate_geometry(&[pg.pg_point], &pg.mid_point, &step_degrees, Widget::Line)[0];
-            pg.degrees = get_vertical_angle_of_vector(pg.mid_point, pg.pg_point);
+            pg.degrees = get_horizontal_angle_of_vector(pg.mid_point, pg.pg_point);
+            if status.is_some() {
+                pg.status = status.unwrap();
+            }
             (CanvasWidget::Polygon(pg.clone()), pg.degrees)
         },
         CanvasWidget::PolyLine(pl) => {
@@ -1633,7 +1784,10 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             pts = rotate_geometry(&pts, &pl.mid_point, &step_degrees, Widget::PolyLine);
             pl.pl_point = pts.pop().unwrap();
             pl.points = pts;
-            pl.degrees = get_vertical_angle_of_vector(pl.mid_point, pl.pl_point);
+            pl.degrees = get_horizontal_angle_of_vector(pl.mid_point, pl.pl_point);
+            if status.is_some() {
+                pl.status = status.unwrap();
+            }
             (CanvasWidget::PolyLine(pl.clone()), pl.degrees)
         },
         CanvasWidget::RightTriangle(tr) => {
@@ -1642,49 +1796,93 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             pts = rotate_geometry(&pts, &tr.mid_point, &step_degrees, Widget::RightTriangle);
             tr.tr_point = pts.pop().unwrap();
             tr.points = pts;
-            tr.degrees = get_vertical_angle_of_vector(tr.mid_point, tr.tr_point);
+            tr.degrees = get_horizontal_angle_of_vector(tr.mid_point, tr.tr_point);
+            if status.is_some() {
+                tr.status = status.unwrap();
+            }
             (CanvasWidget::RightTriangle(tr.clone()), tr.degrees)
         },
     }
 }
 
-fn set_widget_draw_mode(widget: CanvasWidget, 
-                    draw_mode: DrawMode,
+pub fn set_widget_mode_or_status(widget: CanvasWidget, 
+                    mode: Option<DrawMode>,
+                    status: Option<DrawStatus>,
                     ) -> CanvasWidget {
     match widget {
         CanvasWidget::None => {
             CanvasWidget::None
         },
         CanvasWidget::Arc(mut arc) => {
-            arc.draw_mode = draw_mode;
+            if mode.is_some() {
+                arc.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                arc.status = status.unwrap();
+            }
             CanvasWidget::Arc(arc)
         },
         CanvasWidget::Bezier(mut bz) => {
-            bz.draw_mode = draw_mode;
+            if mode.is_some() {
+                bz.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                bz.status = status.unwrap();
+            }
             CanvasWidget::Bezier(bz)
         },
         CanvasWidget::Circle(mut cir) => {
-            cir.draw_mode = draw_mode;
+            if mode.is_some() {
+                cir.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                cir.status = status.unwrap();
+            }
             CanvasWidget::Circle(cir)
         },
         CanvasWidget::Ellipse(mut ell) => {
-            ell.draw_mode = draw_mode;
+            if mode.is_some() {
+                ell.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                ell.status = status.unwrap();
+            }
             CanvasWidget::Ellipse(ell)
         },
         CanvasWidget::Line(mut ln) => {
-            ln.draw_mode = draw_mode;
+            if mode.is_some() {
+                ln.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                ln.status = status.unwrap();
+            }
             CanvasWidget::Line(ln)
         },
         CanvasWidget::PolyLine(mut pl) => {
-            pl.draw_mode = draw_mode;
+            if mode.is_some() {
+                pl.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                pl.status = status.unwrap();
+            }
             CanvasWidget::PolyLine(pl)
         },
         CanvasWidget::Polygon(mut pg) => {
-            pg.draw_mode = draw_mode;
+            if mode.is_some() {
+                pg.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                pg.status = status.unwrap();
+            }
             CanvasWidget::Polygon(pg)
         },
         CanvasWidget::RightTriangle(mut tr) => {
-            tr.draw_mode = draw_mode;
+            if mode.is_some() {
+                tr.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                tr.status = status.unwrap();
+            }
             CanvasWidget::RightTriangle(tr)
         },
     }
@@ -1732,7 +1930,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             bz.points.push(cursor);
 
             if bz.points.len() == 2 {
-                bz.degrees = get_vertical_angle_of_vector(bz.points[0], bz.points[1]);
+                bz.degrees = get_horizontal_angle_of_vector(bz.points[0], bz.points[1]);
             }
             let finished = if bz.points.len() == 3 {
                 true
@@ -1757,13 +1955,12 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
         },
         CanvasWidget::Ellipse(ell) => {
             let mut ell = ell.clone();
-            let finished = if ell.center == Point::default() {
+            ell.points.push(cursor);
+            let finished = if ell.points.len() == 3 {
                 ell.center = cursor;
-                false
-            } else {
-                // ell.radii = ell.center.distance(cursor);
-                ell.ell_point = cursor;
                 true
+            } else {
+                false
             };
             
             (CanvasWidget::Ellipse(ell), finished)
@@ -1803,7 +2000,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
                 true
             };
             if finished {
-                pg.degrees = get_vertical_angle_of_vector(pg.mid_point, pg.pg_point)
+                pg.degrees = get_horizontal_angle_of_vector(pg.mid_point, pg.pg_point)
             }
             (CanvasWidget::Polygon(pg), finished)
         },
@@ -1827,6 +2024,29 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             
             (CanvasWidget::RightTriangle(rt), finished)
         },
+    }
+}
+
+fn find_closest_widget(curves: &HashMap<Id, CanvasWidget>, cursor: Point) -> Option<CanvasWidget> {
+    let mut closest = f32::INFINITY;
+    let mut closest_id = None;
+    for (id, cw) in curves.iter() {
+        let distance: f32 = get_distance_to_mid_point(cw, cursor);
+        if distance < closest {
+            closest = distance;
+            closest_id = Some(id);
+        }
+    }
+
+    let dc_opt = 
+        match closest_id {
+            Some(id) => curves.get(id),
+            None => None,
+        };
+
+    match dc_opt {
+        Some(widget) => Some(widget.clone()),
+        None => None,
     }
 }
 
@@ -1886,11 +2106,14 @@ fn find_closest_point_index(widget: &CanvasWidget,
         }
         CanvasWidget::Ellipse(ell) => {
             let center_dist = cursor.distance(ell.center);
-            let point_dist = cursor.distance(ell.ell_point);
-            if center_dist < point_dist {
+            let point_1_dist = cursor.distance(ell.points[1]);
+            let point_2_dist = cursor.distance(ell.points[2]);
+            if center_dist < point_1_dist && center_dist < point_2_dist {
                 (None, true, false)
-            } else {
+            } else if point_1_dist < point_2_dist {
                 (Some(1), false, false)
+            } else {
+                (Some(2), false, false)
             }
         }
         CanvasWidget::Line(line) => {
@@ -2001,6 +2224,20 @@ fn get_linear_regression(points: &[Point]) -> (f32, f32) {
 
 }
 
+pub fn get_widget_id(widget: &CanvasWidget) -> Id {
+    match widget {
+        CanvasWidget::None => Id::new("None"),
+        CanvasWidget::Arc(arc) => arc.id.clone(),
+        CanvasWidget::Bezier(bz) => bz.id.clone(),
+        CanvasWidget::Circle(cir) => cir.id.clone(),
+        CanvasWidget::Ellipse(ell) => ell.id.clone(),
+        CanvasWidget::Line(line) => line.id.clone(),
+        CanvasWidget::PolyLine(pl) => pl.id.clone(),
+        CanvasWidget::Polygon(pg) => pg.id.clone(),
+        CanvasWidget::RightTriangle(tr) => tr.id.clone(),
+    }
+}
+
 fn get_widget_degrees(widget: &CanvasWidget) -> Option<f32> {
     match widget {
         CanvasWidget::None => Some(0.0),
@@ -2015,88 +2252,23 @@ fn get_widget_degrees(widget: &CanvasWidget) -> Option<f32> {
     }
 }
 
-pub fn get_set_widget_draw_mode(widget: CanvasWidget) -> (DrawMode, Option<CanvasWidget>) {
+pub fn get_draw_mode_and_status(widget: &CanvasWidget) -> (DrawMode, DrawStatus) {
     match widget {
-        CanvasWidget::None => (DrawMode::DrawAll, None),
-        CanvasWidget::Arc(mut arc) => {
-            if arc.draw_mode != DrawMode::DrawAll {
-                let old = arc.draw_mode;
-                arc.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Arc(arc)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::Bezier(mut bz) => {
-            dbg!(&bz);
-            if bz.draw_mode != DrawMode::DrawAll {
-                let old = bz.draw_mode;
-                bz.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Bezier(bz)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::Circle(mut cir) => {
-            if cir.draw_mode != DrawMode::DrawAll {
-                let old = cir.draw_mode;
-                cir.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Circle(cir)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::Ellipse(mut ell) => {
-            if ell.draw_mode != DrawMode::DrawAll {
-                let old = ell.draw_mode;
-                ell.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Ellipse(ell)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::Line(mut ln) => {
-            if ln.draw_mode != DrawMode::DrawAll{
-                let old = ln.draw_mode;
-                ln.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Line(ln)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::PolyLine(mut pl) => {
-            if pl.draw_mode != DrawMode::DrawAll{
-                let old = pl.draw_mode;
-                pl.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::PolyLine(pl)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::Polygon(mut pg) => {
-            if pg.draw_mode != DrawMode::DrawAll{
-                let old = pg.draw_mode;
-                pg.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::Polygon(pg)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
-        CanvasWidget::RightTriangle(mut tr) => {
-            if tr.draw_mode != DrawMode::DrawAll{
-                let old = tr.draw_mode;
-                tr.draw_mode = DrawMode::DrawAll;
-                (old, Some(CanvasWidget::RightTriangle(tr)))
-            } else {
-                (DrawMode::DrawAll, None)
-            }
-        },
+        CanvasWidget::None => (DrawMode::DrawAll, DrawStatus::Completed),
+        CanvasWidget::Arc(arc) => (arc.draw_mode, arc.status),
+        CanvasWidget::Bezier(bz) => (bz.draw_mode, bz.status),
+        CanvasWidget::Circle(cir) => (cir.draw_mode, cir.status),
+        CanvasWidget::Ellipse(ell) => (ell.draw_mode, ell.status),
+        CanvasWidget::Line(ln) => (ln.draw_mode, ln.status),
+        CanvasWidget::PolyLine(pl) => (pl.draw_mode, pl.status),
+        CanvasWidget::Polygon(pg) => (pg.draw_mode, pg.status),
+        CanvasWidget::RightTriangle(tr) => (tr.draw_mode, tr.status),
     }
 }
 
-fn get_distance_to_mid_point(draw_curve: &DrawCurve, cursor: Point) -> f32 {
+fn get_distance_to_mid_point(widget: &CanvasWidget, cursor: Point) -> f32 {
 
-        match &draw_curve.widget {
+        match &widget {
             CanvasWidget::None => f32::INFINITY,
             CanvasWidget::Arc(arc) => {
                 cursor.distance(arc.mid_point)
@@ -2243,23 +2415,9 @@ fn rotate_geometry(
     }
 }
 
-// Rotates a widget by the given angle by an additive method, not to an absolute angle.
-// fn rotate_widget(points: &[Point], center: &Point, degrees: &f32) -> Vec<Point> {
-//     let theta = to_radians(degrees);
-//     let mut new_points = vec![];
-//     for point in points.iter() {
-//         let x_new = (point.x - center.x) * theta.cos() - (point.y - center.y) * theta.sin() + center.x;
-//         let y_new = (point.x - center.x) * theta.sin() + (point.y - center.y) * theta.cos() + center.y;
-
-//         new_points.push(Point { x: x_new, y: y_new })
-//     }
-    
-//     new_points
-// }
-
-// The first point is used to create a vertical vector and is used as the center
-pub fn get_vertical_angle_of_vector(center: Point, p2: Point) -> f32 {
-    let p1 = Point::new(center.x, 10.0);
+// The first point is used to create a horizontal vector
+pub fn get_horizontal_angle_of_vector(center: Point, p2: Point) -> f32 {
+    let p1 = Point::new(center.x-10.0, center.y);
     let pts = translate_geometry(vec![p1, p2], Point::default(), center);
 
     let angle = ((pts[0].y).atan2(pts[0].x) -
@@ -2358,7 +2516,7 @@ fn build_arc_path(arc: &Arc,
                     mid_point = get_mid_point(pts[0], pts[1]);
                     
                     start_angle = Some(Radians::from(
-                        get_vertical_angle_of_vector(
+                        get_horizontal_angle_of_vector(
                             mid_point, 
                             pts[1], 
                         )));
@@ -2458,7 +2616,7 @@ fn build_bezier_path(bz: &Bezier,
                     mid_point = get_mid_point(pts[0], pts[1]);
                     
                     degrees = 
-                        get_vertical_angle_of_vector(
+                        get_horizontal_angle_of_vector(
                             mid_point, 
                             pts[1], 
                         );
@@ -2481,7 +2639,7 @@ fn build_bezier_path(bz: &Bezier,
                             pending_cursor.unwrap()
                         );
                     degrees = 
-                        get_vertical_angle_of_vector(
+                        get_horizontal_angle_of_vector(
                             bz.points[0],  
                             pending_cursor.unwrap(),
                         );
@@ -2562,16 +2720,23 @@ fn build_ellipse_path(ell: &Ellipse,
     Path::new(|p| {
         match draw_mode {
             DrawMode::DrawAll => {
-                // p.ellipse(ell.points[0], ell.points[1], ell.radius);
+                p.ellipse(Elliptical{ 
+                    center: ell.center, 
+                    radii: ell.radii, 
+                    rotation: ell.rotation, 
+                    start_angle: Radians(0.0), 
+                    end_angle: Radians(2.0*PI) 
+                });
             },
             DrawMode::Edit => {
                 let mut center = ell.center;
-                let mut ell_point = ell.ell_point;
-                let mut radius = 100.0;
+                let mut radii = Vector{x: ell.points[1].x, y: ell.points[2].y};
+                let mut p1 = ell.points[1];
+                let mut p2 = ell.points[2];
 
                 if edit_mid_point {
-                    ell_point = translate_geometry(
-                        vec![ell_point], 
+                    center = translate_geometry(
+                        vec![center], 
                         pending_cursor.unwrap(),
                         center,
                     )[0];
@@ -2579,18 +2744,41 @@ fn build_ellipse_path(ell: &Ellipse,
                 }
 
                 if edit_point_index.is_some() {
-                    ell_point = pending_cursor.unwrap();
-                    radius = center.distance(ell_point);
+                    let index = edit_point_index.unwrap();
+                    let cursor = pending_cursor.unwrap();
+                    if index == 1 {
+                        radii = Vector{x: cursor.x, y: ell.points[2].y};
+                        p1 = Point{x: cursor.x, y: ell.points[2].y};
+                    } else {
+                        radii = Vector{x: ell.points[1].x, y: cursor.y};
+                        p2 = Point{x: ell.points[1].x, y: cursor.y}
+                    }
+                    
                 }
 
-                p.circle(center, radius);
+                p.circle(p1, 3.0);
+                p.circle(p2, 3.0);
                 p.circle(center, 3.0);
-                p.circle(ell_point, 3.0);
             },
             DrawMode::New => {
-                let ell_point = pending_cursor.unwrap();
-                let radius = ell.center.distance(ell_point);
-                p.circle(ell.center, radius);
+                let cursor = pending_cursor.unwrap();
+                p.move_to(ell.points[0]);
+                if ell.points.len() == 1 {
+                    p.line_to(cursor);
+                    let radius = ell.points[0].distance(cursor);
+                    p.circle(ell.points[0], radius);
+                } else if ell.points.len() == 2 {
+                    p.line_to(ell.points[1]);
+                    p.line_to(cursor);
+                    p.ellipse(Elliptical{ 
+                        center: ell.points[0], 
+                        radii: Vector{x: ell.points[1].x, y: cursor.y}, 
+                        rotation: Radians(0.0), 
+                        start_angle: Radians(0.0), 
+                        end_angle: Radians(2.0*PI) 
+                    });
+                }
+                
             },
             DrawMode::Rotate => {
                 p.circle(ell.center, 3.0);
@@ -2637,7 +2825,7 @@ fn build_line_path(line: &Line,
                 }
 
                 degrees = 
-                    get_vertical_angle_of_vector(
+                    get_horizontal_angle_of_vector(
                         pts[0],  
                         pts[1], 
                     );
@@ -2653,7 +2841,7 @@ fn build_line_path(line: &Line,
                 p.line_to(pending_cursor.unwrap());
 
                 degrees = 
-                    get_vertical_angle_of_vector(
+                    get_horizontal_angle_of_vector(
                         line.points[0], 
                         pending_cursor.unwrap(), 
                     );
@@ -2709,7 +2897,7 @@ fn build_polygon_path(pg: &Polygon,
                 } 
                 if edit_other_point {
                     pg_point = pending_cursor.unwrap();
-                    degrees = get_vertical_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
+                    degrees = get_horizontal_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
                 }
                 
                 let pts = 
@@ -2734,7 +2922,7 @@ fn build_polygon_path(pg: &Polygon,
                 p.circle(pg_point, 3.0);
             },
             DrawMode::New => {
-                degrees = get_vertical_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
+                degrees = get_horizontal_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
 
                 let points = 
                     build_polygon(
@@ -2822,7 +3010,7 @@ fn build_polyline_path(pl: &PolyLine,
                                 )[0];
                 }
                 if edit_other_point {
-                    degrees = get_vertical_angle_of_vector(pl.mid_point, pending_cursor.unwrap());
+                    degrees = get_horizontal_angle_of_vector(pl.mid_point, pending_cursor.unwrap());
                     let step_degrees = degrees-pl.degrees;
                     pts = rotate_geometry(&pts, &mid_point, &step_degrees, Widget::PolyLine);
                     pl_point = pending_cursor.unwrap();
@@ -2929,7 +3117,7 @@ fn build_right_triangle_path(tr: &RightTriangle,
                     tr_point = translate_geometry(vec![tr_point], mid_point, tr.mid_point)[0];
                 }
                 if edit_other_point {
-                    degrees = get_vertical_angle_of_vector(tr.mid_point, pending_cursor.unwrap());
+                    degrees = get_horizontal_angle_of_vector(tr.mid_point, pending_cursor.unwrap());
                     let step_degrees = degrees-tr.degrees;
                     pts = rotate_geometry(&pts, &mid_point, &step_degrees, Widget::RightTriangle);
                     tr_point = pending_cursor.unwrap();
@@ -3059,19 +3247,19 @@ fn test_get_angle() {
     //  all 4 quadrants
     let center = Point::new(0.0, 0.0);
     let p2 = Point::new(0.0, 10.0);
-    let degrees = get_vertical_angle_of_vector(center, p2);
+    let degrees = get_horizontal_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(20.0, 10.0);
-    let degrees = get_vertical_angle_of_vector(center, p2);
+    let degrees = get_horizontal_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(0.0, -10.0);
-    let degrees = get_vertical_angle_of_vector(center, p2);
+    let degrees = get_horizontal_angle_of_vector(center, p2);
     dbg!(degrees);
 
     let p2 = Point::new(-20.0, 0.0);
-    let degrees = get_vertical_angle_of_vector(center, p2);
+    let degrees = get_horizontal_angle_of_vector(center, p2);
     dbg!(degrees);
 }
 

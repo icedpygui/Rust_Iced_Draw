@@ -1,4 +1,5 @@
 //! This example showcases an interactive `Canvas` for drawing Bézier curves.
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
@@ -7,12 +8,17 @@ use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text, text_input, vertical_space};
-use iced::{event, keyboard, Color, Element, Event, Point, Radians, Subscription, Theme, Vector};
+use iced::{event, keyboard, Color, Element, Event, Point, 
+    Radians, Subscription, Theme, Vector};
+use iced::widget::container::Id;
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_angle_of_vectors, get_vertical_angle_of_vector, get_set_widget_draw_mode, Arc, Bezier, CanvasWidget, Circle, DrawCurve, DrawMode, Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_angle_of_vectors, get_draw_mode_and_status, 
+    get_horizontal_angle_of_vector, get_widget_id, set_widget_mode_or_status, 
+    Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, 
+    Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
 
 
@@ -28,14 +34,13 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct Example {
     state: draw_canvas::State,
-    curves: Vec<DrawCurve>,
+    curves: HashMap<Id, CanvasWidget>,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    AddCurve(DrawCurve),
+    WidgetOperation(CanvasWidget),
     Clear,
-    DeleteLast,
     ModeSelected(String),
     RadioSelected(Widget),
     Event(Event),
@@ -43,186 +48,80 @@ enum Message {
     Save,
     ColorSelected(String),
     PolyInput(String),
+    WidthInput(String),
 }
 
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
-            Message::AddCurve(mut draw_curve) => {
+            Message::WidgetOperation(mut widget) => {
                 
-                let (draw_mode, cw_opt) = 
-                    get_set_widget_draw_mode(draw_curve.widget);
-                
+                let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
+
                 if draw_mode == DrawMode::New {
-                    draw_curve.widget = cw_opt.unwrap();
-                    self.curves.push(draw_curve);
+                    let id = get_widget_id(&widget);
+                    let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
+                    self.curves.insert(id, widget);
                 } else {
-                    self.curves[draw_curve.index].widget = cw_opt.unwrap();
+                    if draw_status == DrawStatus::Completed {
+                        widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
+                    }
+                    let id = get_widget_id(&widget);
+                    self.state.edit_widget_id = Some(id.clone());
+                    self.curves.entry(id).and_modify(|k| *k= widget);
                 }
-                
+
                 self.state.request_redraw();
             }
             Message::Clear => {
                 self.state = draw_canvas::State::default();
                 self.curves.clear();
             }
-            Message::DeleteLast => {
-                if self.curves.is_empty() {
-                    return
-                }
-                self.curves.remove(self.curves.len()-1);
-                self.state.request_redraw();
-            }
             Message::ModeSelected(mode) => {
                 let mode = DrawMode::to_enum(mode.clone());
                 match mode {
                     DrawMode::DrawAll => {
-                        self.state.edit_widget_index = None;
                         self.state.draw_mode = DrawMode::DrawAll;
                     },
                     DrawMode::Edit => {
                         if self.curves.is_empty() {
                             return
                         }
-                        self.state.edit_widget_index = Some(0);
                         self.state.draw_mode = DrawMode::Edit;
                     },
                     DrawMode::New => {
-                        self.state.edit_widget_index = None;
                         self.state.draw_mode = DrawMode::New;
                     },
                     DrawMode::Rotate => {
-                        self.state.edit_widget_index = None;
                         self.state.draw_mode = DrawMode::Rotate;
                     },
                 }
-                
                 self.state.request_redraw();
             },
             Message::RadioSelected(choice) => {
                 match choice {
                     Widget::Arc => {
-                        self.state.selected_widget  = 
-                            CanvasWidget::Arc(
-                                Arc {
-                                    points: vec![],
-                                    mid_point: Point::default(),
-                                    radius: 0.0,
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    start_angle: Radians::from(0.0),
-                                    end_angle: Radians::from(0.0),
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::Arc);
                     },
                     Widget::Bezier => {
-                        self.state.selected_widget  = 
-                            CanvasWidget::Bezier(
-                                Bezier {
-                                    points: vec![],
-                                    mid_point: Point::default(),
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    degrees: 0.0,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::Bezier);
                     },
                     Widget::Circle => {
-                        self.state.selected_widget = 
-                            CanvasWidget::Circle(
-                                Circle {
-                                    center: Point::default(),
-                                    circle_point: Point::default(),
-                                    radius: 0.0,
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::Circle);
                     },
                     Widget::Ellipse => {
-                        self.state.selected_widget = 
-                            CanvasWidget::Ellipse(
-                                draw_canvas::Ellipse {
-                                    center: Point::default(),
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    draw_mode: self.state.draw_mode,
-                                    points: vec![],
-                                    ell_point: Point::default(),
-                                    radii: Vector::ZERO,
-                                    rotation: Radians::PI,
-                                    start_angle: Radians::PI,
-                                    end_angle: Radians::PI,
-                                    degrees: 0.0,
-                                }
-                            );
-                        self.state.selected_radio_widget = Some(Widget::Circle);
+                        self.state.selected_radio_widget = Some(Widget::Ellipse);
                     },
                     Widget::Line => {
-                        self.state.selected_widget = 
-                            CanvasWidget::Line(
-                                Line {
-                                    points: vec![],
-                                    mid_point: Point::default(),
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    degrees: 0.0,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::Line);
                     },
                     Widget::PolyLine => {
-                        self.state.selected_widget = 
-                            CanvasWidget::PolyLine(
-                                PolyLine {
-                                    points: vec![],
-                                    poly_points: self.state.selected_poly_points,
-                                    mid_point: Point::default(),
-                                    pl_point: Point::default(),
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    degrees: 0.0,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::PolyLine);
                     },
                     Widget::Polygon => {
-                        self.state.selected_widget = 
-                            CanvasWidget::Polygon(
-                                Polygon {
-                                    points: vec![],
-                                    poly_points: self.state.selected_poly_points,
-                                    mid_point: Point::default(),
-                                    pg_point: Point::default(),
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    degrees: 0.0,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::Polygon);
                     },
                     Widget::RightTriangle => {
-                        self.state.selected_widget = 
-                            CanvasWidget::RightTriangle(
-                                RightTriangle { 
-                                    points: vec![], 
-                                    mid_point: Point::default(),
-                                    tr_point: Point::default(), 
-                                    color: self.state.selected_color,
-                                    width: self.state.draw_width,
-                                    degrees: 0.0,
-                                    draw_mode: self.state.draw_mode,
-                                }
-                            );
                         self.state.selected_radio_widget = Some(Widget::RightTriangle);
                     },
                     Widget::None => (),
@@ -254,14 +153,15 @@ impl Example {
                 let _ = save(path, &widgets);
             }
             Message::ColorSelected(color_str) => {
-                let f: DrawCanvasColor = match color_str.as_str() {
+                let canvas_color: DrawCanvasColor = match color_str.as_str() {
                     "Primary" => DrawCanvasColor::PRIMARY,
                     "Secondary" => DrawCanvasColor::SECONDARY,
                     "Success" => DrawCanvasColor::SUCCESS,
                     "Danger" => DrawCanvasColor::DANGER,
                     _ => DrawCanvasColor::WHITE,
                 };
-                self.state.selected_color = Color::from(get_rgba_from_canvas_draw_color(f));
+                self.state.selected_color_str = Some(color_str);
+                self.state.selected_color = Color::from(get_rgba_from_canvas_draw_color(canvas_color));
             },
             Message::PolyInput(input) => {
                 // little error checking
@@ -272,13 +172,23 @@ impl Example {
                     self.state.selected_poly_points = 4; //default
                 }
             }
+            Message::WidthInput(input) => {
+                // little error checking
+                self.state.selected_width_str = input.clone();
+                if !input.is_empty() {
+                    self.state.selected_width = input.parse().unwrap();
+                } else {
+                    self.state.selected_width = 2.0; //default
+                }
+                // if self.state.edit_widget_id.is_some() {
+                //     set_edit_widget_width(self.state.edit_widget_id, self.state.selected_width);
+                // }
+            }
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-
         event::listen().map(Message::Event)
-
     }
 
     fn view(&self) -> Element<Message> {
@@ -296,9 +206,9 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let biezer = 
+        let bezier = 
             radio(
-                "Beizer",
+                "Bezier",
                 Widget::Bezier,
                 self.state.selected_radio_widget,
                 Message::RadioSelected,
@@ -312,10 +222,10 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
         
-        let eliptical = 
+        let elipse = 
             radio(
-                "Beizer",
-                Widget::Bezier,
+                "Ellipse",
+                Widget::Ellipse,
                 self.state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
@@ -352,17 +262,6 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
-        let mode = self.state.draw_mode.string();
-
-        let draw_mode = 
-            text(format!("Mode = {}", mode))
-            .into();
-
-        let del_last = 
-            button("Delete Last")
-                .on_press(Message::DeleteLast)
-                .into();
-
         let color_opt = 
             [
             "Primary".to_string(),
@@ -378,7 +277,11 @@ impl Example {
                 self.state.selected_color_str.clone(), 
                 Message::ColorSelected).into();
 
-        let widths = text(format!("widths = {}", 2.0)).into();
+        let widths = 
+            text_input("Width(2.0)", 
+                        &self.state.selected_width_str)
+                .on_input(Message::WidthInput)
+                .into();
 
         let poly_pts_input = 
             text_input("Poly Points(3)", 
@@ -395,10 +298,10 @@ impl Example {
                 ];
 
         let mode = 
-        pick_list(
-            mode_options, 
-            Some(self.state.draw_mode.string()), 
-            Message::ModeSelected).into();
+            pick_list(
+                mode_options, 
+                Some(self.state.draw_mode.string()), 
+                Message::ModeSelected).into();
 
         let save = 
             button("Save")
@@ -424,20 +327,18 @@ impl Example {
             column(vec![
             clear_btn,
             arc, 
-            biezer, 
+            bezier, 
             circle,
-            eliptical, 
+            elipse, 
             line,
             polygon,
             polyline,
             r_triangle,
-            draw_mode,
             mode,
-            poly_pts_input,
             load_save_row,
+            poly_pts_input,
             colors,
             widths,
-            del_last,
             vertical_space().height(50.0).into(),
             instructions,
             ])
@@ -446,15 +347,14 @@ impl Example {
             .padding(10.0)
             .into();
 
-        
-
         let draw =  
             container(self.state
                 .view(&self.curves)
-                .map(Message::AddCurve))
+                .map(Message::WidgetOperation))
                 .into();
         
-        row(vec![col, draw]).into()
+        Element::from(row(vec![col, draw]))
+
     }
 
 }
@@ -519,11 +419,11 @@ pub struct ExportWidget {
 }
 
 #[allow(clippy::redundant_closure)]
-fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
+fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
     
-    let mut vec_dc = vec![];
+    let mut curves: HashMap<Id, CanvasWidget> = HashMap::new();
 
-    for (index, widget) in widgets.iter().enumerate() {
+    for widget in widgets.iter() {
         let points: Vec<Point> = widget.points.iter().map(|p| convert_to_point(p)).collect();
         let mid_point = convert_to_point(&widget.mid_point);
         let other_point = convert_to_point(&widget.other_point);
@@ -533,10 +433,6 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
 
         match widget.name {
             Widget::None => {
-                vec_dc.push(DrawCurve{
-                    widget: CanvasWidget::None,
-                    index,
-                })
             },
             Widget::Arc => {
                 let start_angle = 
@@ -550,7 +446,9 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                         points[1], 
                         points[2],
                     )+Radians::PI;
+                let id = Id::unique();
                 let arc = Arc {
+                    id: id.clone(),
                     points: points,
                     mid_point,
                     radius: 0.0,
@@ -559,134 +457,134 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> Vec<DrawCurve> {
                     start_angle,
                     end_angle,
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Arc(arc),
-                    index,
-                });
+                
+                curves.insert(id, CanvasWidget::Arc(arc));
             },
             Widget::Bezier => {
                 let point = points[1].clone();
+                let id = Id::unique();
                 let bz = Bezier {
+                    id: id.clone(),
                     points: points,
                     mid_point,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    degrees: get_horizontal_angle_of_vector(mid_point, point),
                     draw_mode,
+                    status: DrawStatus::Completed
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Bezier(bz),
-                    index,
-                });
+                
+                curves.insert(id, CanvasWidget::Bezier(bz));
             },
             Widget::Circle => {
+                let id = Id::unique();
                 let cir = Circle {
+                    id: id.clone(),
                     center: mid_point,
                     circle_point: convert_to_point(&widget.points[0]),
                     radius: widget.mid_point.distance(widget.points[0]),
                     color,
                     width,
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Circle(cir),
-                    index,
-                });
+                
+                curves.insert(id, CanvasWidget::Circle(cir));
             },
             Widget::Ellipse => {
-                let cir = Circle {
-                    center: mid_point,
-                    circle_point: convert_to_point(&widget.points[0]),
-                    radius: widget.mid_point.distance(widget.points[0]),
+                let id = Id::unique();
+                let ell = Ellipse {
+                    id: id.clone(),
+                    points,
+                    center: convert_to_point(&widget.points[0]),
+                    radii: Vector { x: 0.0, y: 0.0 },
+                    rotation: Radians::PI,
                     color,
                     width,
+                    degrees: 0.0,
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Circle(cir),
-                    index,
-                });
+                
+                curves.insert(id, CanvasWidget::Ellipse(ell));
             },
             Widget::Line => {
                 let point = points[1].clone();
+                let id = Id::unique();
                 let ln = Line {
+                    id: id.clone(),
                     points,
                     mid_point,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    degrees: get_horizontal_angle_of_vector(mid_point, point),
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Line(ln),
-                    index,
-                });
+                curves.insert(id, CanvasWidget::Line(ln));
             },
             Widget::Polygon => {
+                let id = Id::unique();
                 let pg = Polygon {
+                    id: id.clone(),
                     points,
                     poly_points: widget.poly_points,
                     mid_point,
                     pg_point: other_point,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, other_point),
+                    degrees: get_horizontal_angle_of_vector(mid_point, other_point),
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::Polygon(pg),
-                    index,
-                });
+                curves.insert(id, CanvasWidget::Polygon(pg));
             },
             Widget::PolyLine => {
+                let id = Id::unique();
                 let pl = PolyLine {
+                    id: id.clone(),
                     points,
                     poly_points: widget.poly_points,
                     mid_point,
                     pl_point: other_point,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, other_point),
+                    degrees: get_horizontal_angle_of_vector(mid_point, other_point),
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::PolyLine(pl),
-                    index,
-                });
+                curves.insert(id, CanvasWidget::PolyLine(pl));
             },
             Widget::RightTriangle => {
                 let point = points[0].clone();
+                let id = Id::unique();
                 let tr = RightTriangle {
+                    id: id.clone(),
                     points,
                     mid_point,
                     tr_point: other_point,
                     color,
                     width,
-                    degrees: get_vertical_angle_of_vector(mid_point, point),
+                    degrees: get_horizontal_angle_of_vector(mid_point, point),
                     draw_mode,
+                    status: DrawStatus::Completed,
                 };
-                vec_dc.push(DrawCurve {
-                    widget: CanvasWidget::RightTriangle(tr),
-                    index,
-                });
+                curves.insert(id, CanvasWidget::RightTriangle(tr));
             },
         }
     }
 
-    vec_dc
+    curves
 
 }
 
-fn convert_to_export(curves: &[DrawCurve]) -> Vec<ExportWidget> {
-    let mut widgets = vec![];
-    for curve in curves.iter() {
-        widgets.push(curve.widget.clone())
-    }   
-    
+fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
+     
     let mut export = vec![];
 
-    for widget in widgets.iter() {
+    for (_id, widget) in widgets.iter() {
 
         let (name, 
             points, 
@@ -710,7 +608,7 @@ fn convert_to_export(curves: &[DrawCurve]) -> Vec<ExportWidget> {
                     (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, cir.color, cir.width)
                 },
                 CanvasWidget::Ellipse(ell) => {
-                    (Widget::Ellipse, &vec![ell.ell_point], ell.center, ell.ell_point, 0, ell.color, ell.width)
+                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.color, ell.width)
                 },
                 CanvasWidget::Line(ln) => {
                     (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.color, ln.width)
