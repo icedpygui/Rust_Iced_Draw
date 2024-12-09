@@ -61,7 +61,7 @@ impl DrawMode {
 }
 
 #[derive(Debug)]
-pub struct State {
+pub struct CanvasState {
     cache: canvas::Cache,
     pub draw_mode: DrawMode,
     pub edit_widget_id: Option<Id>,
@@ -76,7 +76,7 @@ pub struct State {
     pub selected_width_str: String,
 }
 
-impl Default for State {
+impl Default for CanvasState {
     fn default() -> Self {
         Self { 
                 cache: canvas::Cache::default(),
@@ -95,7 +95,7 @@ impl Default for State {
         }
 }
 
-impl State {
+impl CanvasState {
     pub fn view<'a>(&'a self, curves: &'a HashMap<Id, CanvasWidget>) -> Element<'a, CanvasWidget> {
         Canvas::new(DrawPending {
             state: self,
@@ -112,7 +112,7 @@ impl State {
 }
 
 struct DrawPending<'a> {
-    state: &'a State,
+    state: &'a CanvasState,
     curves: &'a HashMap<Id, CanvasWidget>,
 }
 
@@ -504,7 +504,7 @@ impl DrawCurve {
                                     ell.draw_mode,
                                     None, 
                                     None, 
-                                    false
+                                    false,
                                 );
                             (Some(path), Some(ell.color), Some(ell.width))
                         }
@@ -1070,7 +1070,7 @@ impl Pending {
                                     None,
                                     false,
                                 );
-                                (path, ell.color, ell.width, ell.center, None)
+                                (path, ell.color, ell.width, ell.center, Some(to_degrees(&ell.rotation.0)))
                             },
                         CanvasWidget::Line(line) => {
                             let (path, pending_degrees, _) = 
@@ -1201,7 +1201,6 @@ pub struct Ellipse {
     pub rotation: Radians,
     pub color: Color,
     pub width: f32,
-    pub degrees: f32,
     pub draw_mode: DrawMode,
     pub status: DrawStatus,
 }
@@ -1336,7 +1335,6 @@ fn add_new_widget(widget: Widget,
                     rotation: Radians(0.0),
                     color,
                     width,
-                    degrees: 0.0,
                     draw_mode,
                     status: DrawStatus::Inprogress,
                 }
@@ -1425,7 +1423,11 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
         CanvasWidget::Circle(cir) => { 
             Some(CanvasWidget::Circle(cir))
         },
-        CanvasWidget::Ellipse(ell) => {
+        CanvasWidget::Ellipse(mut ell) => {
+            ell.center = ell.points[0];
+            let vx = ell.points[1].distance(ell.center);
+            let vy = cursor.distance(ell.center);
+            ell.radii = Vector{ x: vx, y: vy };
             Some(CanvasWidget::Ellipse(ell))
         },
         CanvasWidget::Line(mut ln) => {
@@ -1534,7 +1536,7 @@ fn update_edited_widget(widget: CanvasWidget,
             } else if mid_point {
                 arc.points = 
                     translate_geometry(
-                        arc.points, 
+                        &arc.points, 
                         cursor,
                         arc.mid_point, 
                         );
@@ -1550,7 +1552,7 @@ fn update_edited_widget(widget: CanvasWidget,
             } else if mid_point {
                 bz.points = 
                     translate_geometry(
-                        bz.points, 
+                        &bz.points, 
                         cursor,
                         bz.mid_point, 
                         );
@@ -1573,7 +1575,7 @@ fn update_edited_widget(widget: CanvasWidget,
                 let mut points = vec![cir.circle_point];
                 points = 
                     translate_geometry(
-                        points, 
+                        &points, 
                         cursor,
                         cir.center,
                     );
@@ -1585,15 +1587,30 @@ fn update_edited_widget(widget: CanvasWidget,
         },
         CanvasWidget::Ellipse(mut ell) => {
            if mid_point {
-                let mut points = vec![ell.center];
-                points = 
+                let points = 
                     translate_geometry(
-                        points, 
+                        &ell.points, 
                         cursor,
                         ell.center,
                     );
                 ell.center = cursor;
+                ell.points = points;
             }
+            if index == Some(1) {
+                let p1 = Point::new(cursor.x, ell.center.y);
+                let vx = p1.distance(ell.center);
+                let vy = ell.points[2].distance(ell.center);
+                ell.points[1] = p1;
+                dbg!(&p1);
+                ell.radii = Vector{ x: vx, y: vy };
+            } else if index == Some(2) {
+                let p2 = Point::new(ell.center.x, cursor.y);
+                let vx = ell.points[1].distance(ell.center);
+                let vy = p2.distance(ell.center);
+                ell.points[2] = p2;
+                ell.radii = Vector{ x: vx, y: vy };
+            }
+
             ell.status = status;
             CanvasWidget::Ellipse(ell)
         },
@@ -1604,7 +1621,7 @@ fn update_edited_widget(widget: CanvasWidget,
             } else if mid_point {
                 line.points = 
                     translate_geometry(
-                        line.points.clone(), 
+                        &line.points, 
                         cursor,
                         line.mid_point, 
                         );
@@ -1634,7 +1651,7 @@ fn update_edited_widget(widget: CanvasWidget,
             } else if mid_point {
                 let trans_pts = 
                     translate_geometry(
-                        vec![pg.pg_point], 
+                        &vec![pg.pg_point], 
                         cursor,
                         pg.mid_point, 
                     );
@@ -1661,7 +1678,7 @@ fn update_edited_widget(widget: CanvasWidget,
                     );
                 pl.pl_point = 
                     translate_geometry(
-                        vec![pl.pl_point], 
+                        &vec![pl.pl_point], 
                         mid_point, 
                         pl.mid_point
                     )[0];
@@ -1676,7 +1693,7 @@ fn update_edited_widget(widget: CanvasWidget,
                 pts.push(pl.pl_point);
                 pts = 
                     translate_geometry(
-                        pts, 
+                        &pts, 
                         cursor,
                         pl.mid_point, 
                     );
@@ -1713,7 +1730,7 @@ fn update_edited_widget(widget: CanvasWidget,
                 pts.push(tr.tr_point);
                 pts = 
                     translate_geometry(
-                        pts, 
+                        &pts, 
                         cursor,
                         tr.mid_point, 
                     );
@@ -1759,7 +1776,12 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             (CanvasWidget::Circle(cir.clone()), 0.0)
         },
         CanvasWidget::Ellipse(ell) => {
-            (CanvasWidget::Ellipse(ell.clone()), 0.0)
+            let rads = to_radians(&step_degrees) + ell.rotation.0;
+            ell.rotation = Radians(rads);
+            if status.is_some() {
+                ell.status = status.unwrap();
+            }
+            (CanvasWidget::Ellipse(ell.clone()), to_degrees(&rads))
         },
         CanvasWidget::Line(ln) => {
             ln.points = rotate_geometry(&ln.points, &ln.mid_point, &step_degrees, Widget::Line);
@@ -1955,9 +1977,16 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
         },
         CanvasWidget::Ellipse(ell) => {
             let mut ell = ell.clone();
-            ell.points.push(cursor);
-            let finished = if ell.points.len() == 3 {
-                ell.center = cursor;
+            let finished = if ell.points.len() == 0 {
+                ell.points.push(cursor);
+                false
+            } else if ell.points.len() == 1 {
+                let p1 = Point::new(cursor.x, ell.points[0].y);
+                ell.points.push(p1);
+                false
+            } else if ell.points.len() == 2 {
+                let p2 = Point::new(ell.points[0].x, cursor.y);
+                ell.points.push(p2);
                 true
             } else {
                 false
@@ -2372,7 +2401,7 @@ fn get_line_from_slope_intercept(points: &[Point],
 
 }
 
-fn translate_geometry(pts: Vec<Point>, 
+fn translate_geometry(pts: &Vec<Point>, 
                         new_center: Point,
                         old_center: Point, 
                         ) 
@@ -2418,7 +2447,12 @@ fn rotate_geometry(
 // The first point is used to create a horizontal vector
 pub fn get_horizontal_angle_of_vector(center: Point, p2: Point) -> f32 {
     let p1 = Point::new(center.x-10.0, center.y);
-    let pts = translate_geometry(vec![p1, p2], Point::default(), center);
+    let pts = 
+        translate_geometry(
+            &vec![p1, p2], 
+            Point::default(), 
+            center,
+        );
 
     let angle = ((pts[0].y).atan2(pts[0].x) -
                         (pts[1].y).atan2(pts[1].x)) * -1.0;
@@ -2435,7 +2469,12 @@ pub fn get_horizontal_angle_of_vector(center: Point, p2: Point) -> f32 {
 
 pub fn get_angle_of_vectors(center: Point, p1: Point, p2: Point) -> Radians {
 
-    let pts = translate_geometry(vec![p1, p2], Point::default(), center);
+    let pts = 
+        translate_geometry(
+            &vec![p1, p2], 
+            Point::default(), 
+            center,
+        );
 
     let angle = ((pts[0].y).atan2(pts[0].x) -
                         (pts[1].y).atan2(pts[1].x)) * -1.0;
@@ -2505,7 +2544,7 @@ fn build_arc_path(arc: &Arc,
 
                 if edit_mid_point {
                     pts = translate_geometry(
-                        pts.clone(), 
+                        &pts, 
                         pending_cursor.unwrap(),
                         mid_point, 
                         );
@@ -2605,7 +2644,7 @@ fn build_bezier_path(bz: &Bezier,
 
                 if edit_mid_point {
                     pts = translate_geometry(
-                        pts.clone(), 
+                        &pts, 
                         pending_cursor.unwrap(),
                         mid_point, 
                         );
@@ -2683,7 +2722,7 @@ fn build_circle_path(cir: &Circle,
 
                 if edit_mid_point {
                     cir_point = translate_geometry(
-                        vec![cir_point], 
+                        &vec![cir_point], 
                         pending_cursor.unwrap(),
                         center,
                     )[0];
@@ -2730,49 +2769,69 @@ fn build_ellipse_path(ell: &Ellipse,
             },
             DrawMode::Edit => {
                 let mut center = ell.center;
-                let mut radii = Vector{x: ell.points[1].x, y: ell.points[2].y};
+                let mut radii = ell.radii;
                 let mut p1 = ell.points[1];
                 let mut p2 = ell.points[2];
 
                 if edit_mid_point {
-                    center = translate_geometry(
-                        vec![center], 
+                    let points = translate_geometry(
+                        &ell.points, 
                         pending_cursor.unwrap(),
                         center,
-                    )[0];
+                    );
                     center = pending_cursor.unwrap();
+                    p1 = points[1];
+                    p2 = points[2];
                 }
 
                 if edit_point_index.is_some() {
-                    let index = edit_point_index.unwrap();
                     let cursor = pending_cursor.unwrap();
-                    if index == 1 {
-                        radii = Vector{x: cursor.x, y: ell.points[2].y};
-                        p1 = Point{x: cursor.x, y: ell.points[2].y};
+                    if edit_point_index == Some(1) {
+                        let vx = cursor.distance(center);
+                        let vy = ell.points[2].distance(center);
+                        p1 = Point::new(cursor.x, center.y);
+                        radii = Vector{x: vx, y: vy};
                     } else {
-                        radii = Vector{x: ell.points[1].x, y: cursor.y};
-                        p2 = Point{x: ell.points[1].x, y: cursor.y}
+                        let vx = ell.points[1].distance(center);
+                        let vy = cursor.distance(center);
+                        p2 = Point::new(center.x, cursor.y);
+                        radii = Vector{x: vx, y: vy};
                     }
-                    
                 }
 
+                p.circle(center, 3.0);
                 p.circle(p1, 3.0);
                 p.circle(p2, 3.0);
-                p.circle(center, 3.0);
+                p.ellipse(Elliptical{ 
+                    center, 
+                    radii, 
+                    rotation: ell.rotation, 
+                    start_angle: Radians(0.0), 
+                    end_angle: Radians(2.0*PI) 
+                });
             },
             DrawMode::New => {
                 let cursor = pending_cursor.unwrap();
-                p.move_to(ell.points[0]);
-                if ell.points.len() == 1 {
-                    p.line_to(cursor);
-                    let radius = ell.points[0].distance(cursor);
+                if ell.points.len() > 0 {
+                    p.move_to(ell.points[0]);
+
+                }
+                if ell.points.len() == 0 {
+                    p.circle(cursor, 3.0);
+                } else if ell.points.len() == 1 {
+                    let p1 = Point::new(cursor.x, ell.points[0].y);
+                    p.line_to(p1);
+                    let radius = p1.distance(ell.points[0]);
                     p.circle(ell.points[0], radius);
                 } else if ell.points.len() == 2 {
                     p.line_to(ell.points[1]);
-                    p.line_to(cursor);
+                    let p2 = Point::new(ell.points[0].x, cursor.y);
+                    p.line_to(p2);
+                    let vx = ell.points[1].distance(ell.points[0]);
+                    let vy = p2.distance(ell.points[0]);
                     p.ellipse(Elliptical{ 
                         center: ell.points[0], 
-                        radii: Vector{x: ell.points[1].x, y: cursor.y}, 
+                        radii: Vector{x: vx, y: vy}, 
                         rotation: Radians(0.0), 
                         start_angle: Radians(0.0), 
                         end_angle: Radians(2.0*PI) 
@@ -2781,6 +2840,15 @@ fn build_ellipse_path(ell: &Ellipse,
                 
             },
             DrawMode::Rotate => {
+                let vx = ell.points[1].distance(ell.center);
+                let vy = ell.points[2].distance(ell.center);
+                p.ellipse(Elliptical{ 
+                        center: ell.center, 
+                        radii: Vector{x: vx, y: vy}, 
+                        rotation: ell.rotation, 
+                        start_angle: Radians(0.0), 
+                        end_angle: Radians(2.0*PI) 
+                    });
                 p.circle(ell.center, 3.0);
             },
         }
@@ -2812,7 +2880,7 @@ fn build_line_path(line: &Line,
 
                 if edit_mid_point {
                     pts = translate_geometry(
-                        pts, 
+                        &pts, 
                         pending_cursor.unwrap(),
                         mid_point,
                     );
@@ -2889,7 +2957,7 @@ fn build_polygon_path(pg: &Polygon,
             DrawMode::Edit => {
                 if edit_mid_point {
                     pg_point = translate_geometry(
-                        vec![pg.pg_point], 
+                        &vec![pg.pg_point], 
                         pending_cursor.unwrap(),
                         pg.mid_point, 
                     )[0];
@@ -2993,7 +3061,7 @@ fn build_polyline_path(pl: &PolyLine,
                 if edit_mid_point {
                     pts.push(pl_point);
                     pts = translate_geometry(
-                        pts, 
+                        &pts, 
                         pending_cursor.unwrap(),
                         mid_point, 
                     );
@@ -3004,7 +3072,7 @@ fn build_polyline_path(pl: &PolyLine,
                     pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
                     mid_point = get_mid_geometry(&pts, Widget::PolyLine);
                     pl_point = translate_geometry(
-                                    vec![pl_point], 
+                                    &vec![pl_point], 
                                     mid_point, 
                                     pl.mid_point,
                                 )[0];
@@ -3093,7 +3161,7 @@ fn build_right_triangle_path(tr: &RightTriangle,
                 pts.push(tr_point);
                 if edit_mid_point {
                     pts = translate_geometry(
-                        pts, 
+                        &pts, 
                         pending_cursor.unwrap(),
                         mid_point, 
                     );
@@ -3114,12 +3182,25 @@ fn build_right_triangle_path(tr: &RightTriangle,
                         pts[2].x = cursor.x;
                 }
                     mid_point = get_mid_geometry(&pts, Widget::RightTriangle);
-                    tr_point = translate_geometry(vec![tr_point], mid_point, tr.mid_point)[0];
+                    tr_point = 
+                        translate_geometry(
+                            &vec![tr_point], 
+                            mid_point, 
+                            tr.mid_point)[0];
                 }
                 if edit_other_point {
-                    degrees = get_horizontal_angle_of_vector(tr.mid_point, pending_cursor.unwrap());
+                    degrees = 
+                        get_horizontal_angle_of_vector(
+                            tr.mid_point, 
+                            pending_cursor.unwrap()
+                        );
                     let step_degrees = degrees-tr.degrees;
-                    pts = rotate_geometry(&pts, &mid_point, &step_degrees, Widget::RightTriangle);
+                    pts = rotate_geometry(
+                            &pts, 
+                            &mid_point, 
+                            &step_degrees, 
+                            Widget::RightTriangle
+                        );
                     tr_point = pending_cursor.unwrap();
                 }
 

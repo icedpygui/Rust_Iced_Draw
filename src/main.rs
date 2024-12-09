@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
 use draw_canvas::{get_angle_of_vectors, get_draw_mode_and_status, 
-    get_horizontal_angle_of_vector, get_widget_id, set_widget_mode_or_status, 
+    get_widget_id, set_widget_mode_or_status, 
     Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, 
     Line, PolyLine, Polygon, RightTriangle, Widget};
 mod colors;
@@ -33,13 +33,13 @@ pub fn main() -> iced::Result {
 
 #[derive(Default)]
 struct Example {
-    state: draw_canvas::State,
-    curves: HashMap<Id, CanvasWidget>,
+    canvas_state: draw_canvas::CanvasState,
+    canvas_curves: HashMap<Id, CanvasWidget>,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-    WidgetOperation(CanvasWidget),
+    WidgetDraw(CanvasWidget),
     Clear,
     ModeSelected(String),
     RadioSelected(Widget),
@@ -54,75 +54,75 @@ enum Message {
 impl Example {
     fn update(&mut self, message: Message) {
         match message {
-            Message::WidgetOperation(mut widget) => {
+            Message::WidgetDraw(mut widget) => {
                 
                 let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
 
                 if draw_mode == DrawMode::New {
                     let id = get_widget_id(&widget);
                     let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
-                    self.curves.insert(id, widget);
+                    self.canvas_curves.insert(id, widget);
                 } else {
                     if draw_status == DrawStatus::Completed {
                         widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
                     }
                     let id = get_widget_id(&widget);
-                    self.state.edit_widget_id = Some(id.clone());
-                    self.curves.entry(id).and_modify(|k| *k= widget);
+                    self.canvas_state.edit_widget_id = Some(id.clone());
+                    self.canvas_curves.entry(id).and_modify(|k| *k= widget);
                 }
 
-                self.state.request_redraw();
+                self.canvas_state.request_redraw();
             }
             Message::Clear => {
-                self.state = draw_canvas::State::default();
-                self.curves.clear();
+                self.canvas_state = draw_canvas::CanvasState::default();
+                self.canvas_curves.clear();
             }
             Message::ModeSelected(mode) => {
                 let mode = DrawMode::to_enum(mode.clone());
                 match mode {
                     DrawMode::DrawAll => {
-                        self.state.draw_mode = DrawMode::DrawAll;
+                        self.canvas_state.draw_mode = DrawMode::DrawAll;
                     },
                     DrawMode::Edit => {
-                        if self.curves.is_empty() {
+                        if self.canvas_curves.is_empty() {
                             return
                         }
-                        self.state.draw_mode = DrawMode::Edit;
+                        self.canvas_state.draw_mode = DrawMode::Edit;
                     },
                     DrawMode::New => {
-                        self.state.draw_mode = DrawMode::New;
+                        self.canvas_state.draw_mode = DrawMode::New;
                     },
                     DrawMode::Rotate => {
-                        self.state.draw_mode = DrawMode::Rotate;
+                        self.canvas_state.draw_mode = DrawMode::Rotate;
                     },
                 }
-                self.state.request_redraw();
+                self.canvas_state.request_redraw();
             },
             Message::RadioSelected(choice) => {
                 match choice {
                     Widget::Arc => {
-                        self.state.selected_radio_widget = Some(Widget::Arc);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Arc);
                     },
                     Widget::Bezier => {
-                        self.state.selected_radio_widget = Some(Widget::Bezier);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Bezier);
                     },
                     Widget::Circle => {
-                        self.state.selected_radio_widget = Some(Widget::Circle);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Circle);
                     },
                     Widget::Ellipse => {
-                        self.state.selected_radio_widget = Some(Widget::Ellipse);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Ellipse);
                     },
                     Widget::Line => {
-                        self.state.selected_radio_widget = Some(Widget::Line);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Line);
                     },
                     Widget::PolyLine => {
-                        self.state.selected_radio_widget = Some(Widget::PolyLine);
+                        self.canvas_state.selected_radio_widget = Some(Widget::PolyLine);
                     },
                     Widget::Polygon => {
-                        self.state.selected_radio_widget = Some(Widget::Polygon);
+                        self.canvas_state.selected_radio_widget = Some(Widget::Polygon);
                     },
                     Widget::RightTriangle => {
-                        self.state.selected_radio_widget = Some(Widget::RightTriangle);
+                        self.canvas_state.selected_radio_widget = Some(Widget::RightTriangle);
                     },
                     Widget::None => (),
                 } 
@@ -131,25 +131,25 @@ impl Example {
                 key: keyboard::Key::Named(key::Named::Escape),
                 ..
             })) => { 
-                self.state.escape_pressed = true;
+                self.canvas_state.escape_pressed = true;
             },
             Message::Event(Event::Keyboard(keyboard::Event::KeyReleased {
                 key: keyboard::Key::Named(key::Named::Escape),
                 ..
             })) => { 
-                self.state.escape_pressed = false;
+                self.canvas_state.escape_pressed = false;
             },
             Message::Event(_) => (),
             Message::Load => {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let widgets = serde_json::from_str(&data).expect("Unable to parse");
-                self.curves = import_widgets(widgets);
-                self.state.request_redraw();
+                self.canvas_curves = import_widgets(widgets);
+                self.canvas_state.request_redraw();
             }
             Message::Save => {
                 let path = Path::new("./resources/data.json");
-                let widgets = convert_to_export(&self.curves);
+                let widgets = convert_to_export(&self.canvas_curves);
                 let _ = save(path, &widgets);
             }
             Message::ColorSelected(color_str) => {
@@ -160,25 +160,25 @@ impl Example {
                     "Danger" => DrawCanvasColor::DANGER,
                     _ => DrawCanvasColor::WHITE,
                 };
-                self.state.selected_color_str = Some(color_str);
-                self.state.selected_color = Color::from(get_rgba_from_canvas_draw_color(canvas_color));
+                self.canvas_state.selected_color_str = Some(color_str);
+                self.canvas_state.selected_color = Color::from(get_rgba_from_canvas_draw_color(canvas_color));
             },
             Message::PolyInput(input) => {
                 // little error checking
-                self.state.selected_poly_points_str = input.clone();
+                self.canvas_state.selected_poly_points_str = input.clone();
                 if !input.is_empty() {
-                    self.state.selected_poly_points = input.parse().unwrap();
+                    self.canvas_state.selected_poly_points = input.parse().unwrap();
                 } else {
-                    self.state.selected_poly_points = 4; //default
+                    self.canvas_state.selected_poly_points = 4; //default
                 }
             }
             Message::WidthInput(input) => {
                 // little error checking
-                self.state.selected_width_str = input.clone();
+                self.canvas_state.selected_width_str = input.clone();
                 if !input.is_empty() {
-                    self.state.selected_width = input.parse().unwrap();
+                    self.canvas_state.selected_width = input.parse().unwrap();
                 } else {
-                    self.state.selected_width = 2.0; //default
+                    self.canvas_state.selected_width = 2.0; //default
                 }
                 // if self.state.edit_widget_id.is_some() {
                 //     set_edit_widget_width(self.state.edit_widget_id, self.state.selected_width);
@@ -202,7 +202,7 @@ impl Example {
             radio(
                 "Arc",
                 Widget::Arc,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -210,7 +210,7 @@ impl Example {
             radio(
                 "Bezier",
                 Widget::Bezier,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -218,7 +218,7 @@ impl Example {
             radio(
                 "Circle",
                 Widget::Circle,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
         
@@ -226,7 +226,7 @@ impl Example {
             radio(
                 "Ellipse",
                 Widget::Ellipse,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -234,7 +234,7 @@ impl Example {
             radio(
                 "Line",
                 Widget::Line,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -242,7 +242,7 @@ impl Example {
             radio(
                 "Polygon",
                 Widget::Polygon,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -250,7 +250,7 @@ impl Example {
             radio(
                 "PolyLine",
                 Widget::PolyLine,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -258,7 +258,7 @@ impl Example {
             radio(
                 "Right Triangle",
                 Widget::RightTriangle,
-                self.state.selected_radio_widget,
+                self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
 
@@ -274,18 +274,18 @@ impl Example {
         let colors = 
             pick_list(
                 color_opt, 
-                self.state.selected_color_str.clone(), 
+                self.canvas_state.selected_color_str.clone(), 
                 Message::ColorSelected).into();
 
         let widths = 
             text_input("Width(2.0)", 
-                        &self.state.selected_width_str)
+                        &self.canvas_state.selected_width_str)
                 .on_input(Message::WidthInput)
                 .into();
 
         let poly_pts_input = 
             text_input("Poly Points(3)", 
-                        &self.state.selected_poly_points_str)
+                        &self.canvas_state.selected_poly_points_str)
                 .on_input(Message::PolyInput)
                 .into();
 
@@ -300,7 +300,7 @@ impl Example {
         let mode = 
             pick_list(
                 mode_options, 
-                Some(self.state.draw_mode.string()), 
+                Some(self.canvas_state.draw_mode.string()), 
                 Message::ModeSelected).into();
 
         let save = 
@@ -348,9 +348,9 @@ impl Example {
             .into();
 
         let draw =  
-            container(self.state
-                .view(&self.curves)
-                .map(Message::WidgetOperation))
+            container(self.canvas_state
+                .view(&self.canvas_curves)
+                .map(Message::WidgetDraw))
                 .into();
         
         Element::from(row(vec![col, draw]))
@@ -414,6 +414,7 @@ pub struct ExportWidget {
     pub poly_points: usize,
     pub mid_point: ExportPoint,
     pub other_point: ExportPoint,
+    pub rotation: f32,
     pub color: ExportColor,
     pub width: f32,
 }
@@ -463,7 +464,6 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                 curves.insert(id, CanvasWidget::Arc(arc));
             },
             Widget::Bezier => {
-                let point = points[1].clone();
                 let id = Id::unique();
                 let bz = Bezier {
                     id: id.clone(),
@@ -471,7 +471,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     mid_point,
                     color,
                     width,
-                    degrees: get_horizontal_angle_of_vector(mid_point, point),
+                    degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed
                 };
@@ -495,15 +495,16 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
             },
             Widget::Ellipse => {
                 let id = Id::unique();
+                let vx = points[1].distance(points[0]);
+                let vy = points[2].distance(points[0]);
                 let ell = Ellipse {
                     id: id.clone(),
                     points,
                     center: convert_to_point(&widget.points[0]),
-                    radii: Vector { x: 0.0, y: 0.0 },
-                    rotation: Radians::PI,
+                    radii: Vector { x: vx, y: vy },
+                    rotation: Radians(widget.rotation),
                     color,
                     width,
-                    degrees: 0.0,
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
@@ -511,7 +512,6 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                 curves.insert(id, CanvasWidget::Ellipse(ell));
             },
             Widget::Line => {
-                let point = points[1].clone();
                 let id = Id::unique();
                 let ln = Line {
                     id: id.clone(),
@@ -519,7 +519,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     mid_point,
                     color,
                     width,
-                    degrees: get_horizontal_angle_of_vector(mid_point, point),
+                    degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
@@ -535,7 +535,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     pg_point: other_point,
                     color,
                     width,
-                    degrees: get_horizontal_angle_of_vector(mid_point, other_point),
+                    degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
@@ -551,14 +551,13 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     pl_point: other_point,
                     color,
                     width,
-                    degrees: get_horizontal_angle_of_vector(mid_point, other_point),
+                    degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
                 curves.insert(id, CanvasWidget::PolyLine(pl));
             },
             Widget::RightTriangle => {
-                let point = points[0].clone();
                 let id = Id::unique();
                 let tr = RightTriangle {
                     id: id.clone(),
@@ -567,7 +566,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     tr_point: other_point,
                     color,
                     width,
-                    degrees: get_horizontal_angle_of_vector(mid_point, point),
+                    degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
@@ -591,36 +590,37 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
             mid_point,
             other_point, 
             poly_points, 
+            rotation,
             color, 
             width, 
             ) = 
             match widget {
                 CanvasWidget::None => {
-                    (Widget::None, &vec![], Point::default(), Point::default(), 0, Color::TRANSPARENT, 0.0,)
+                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, Color::TRANSPARENT, 0.0,)
                 },
                 CanvasWidget::Arc(arc) => {
-                    (Widget::Arc, &arc.points, arc.mid_point, Point::default(), 0, arc.color, arc.width)
+                    (Widget::Arc, &arc.points, arc.mid_point, Point::default(), 0, 0.0, arc.color, arc.width)
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.color, bz.width)
+                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, bz.color, bz.width)
                 },
                 CanvasWidget::Circle(cir) => {
-                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, cir.color, cir.width)
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.color, cir.width)
                 },
                 CanvasWidget::Ellipse(ell) => {
-                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.color, ell.width)
+                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, ell.color, ell.width)
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.color, ln.width)
+                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, ln.color, ln.width)
                 },
                 CanvasWidget::Polygon(pg) => {
-                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.color, pg.width)
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, pg.color, pg.width)
                 },
                 CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.color, pl.width)
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, pl.color, pl.width)
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, Point::default(), 3, tr.color, tr.width)
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, Point::default(), 3, tr.degrees, tr.color, tr.width)
                 },
         };
 
@@ -638,7 +638,8 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
                 points: x_points,
                 poly_points, 
                 mid_point: x_mid_pt,
-                other_point: x_other_point, 
+                other_point: x_other_point,
+                rotation, 
                 color: x_color, 
                 width,  
             })
