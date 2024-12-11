@@ -63,6 +63,7 @@ impl DrawMode {
 #[derive(Debug)]
 pub struct CanvasState {
     cache: canvas::Cache,
+    pub curves: HashMap<Id, CanvasWidget>,
     pub draw_mode: DrawMode,
     pub edit_widget_id: Option<Id>,
     pub escape_pressed: bool,
@@ -80,6 +81,7 @@ impl Default for CanvasState {
     fn default() -> Self {
         Self { 
                 cache: canvas::Cache::default(),
+                curves: HashMap::new(),
                 draw_mode: DrawMode::DrawAll,
                 edit_widget_id: None,
                 escape_pressed: false,
@@ -652,7 +654,7 @@ impl Pending {
                             let degrees: Option<f32> = if end_angle.is_some() && start_angle.is_some() {
                                 Some(to_degrees(&Radians::into(end_angle.unwrap() - start_angle.unwrap())))
                             } else if start_angle.is_some() {
-                                Some(to_degrees(&Radians::into(start_angle.unwrap()))-180.0)
+                                Some(to_degrees(&Radians::into(start_angle.unwrap())))
                             } else  {
                                 None
                             };
@@ -1908,7 +1910,6 @@ pub fn set_widget_mode_or_status(widget: CanvasWidget,
             CanvasWidget::RightTriangle(tr)
         },
     }
-
 }
 
 // Adds a cursor position to the points then determines 
@@ -1939,7 +1940,12 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
                         get_angle_of_vectors(
                             arc.points[0], 
                             arc.points[1], 
-                            cursor)+Radians::PI;
+                            cursor) + arc.start_angle;
+                    // calc the end_angle point        
+                    let r = arc.radius;
+                    let b = arc.end_angle.0;
+                    let point_b = Point::new(r*b.cos(), r*b.sin());
+                    arc.points[2] = translate_geometry(&vec![point_b], arc.mid_point, Point::default())[0];
                     true
                 },
                 _ => false
@@ -2523,9 +2529,8 @@ fn build_arc_path(arc: &Arc,
                     ) -> (Path, Point, Option<Radians>, Option<Radians>) {
 
     let mut mid_point = arc.mid_point;
-    let adjustment = Radians::PI;
     let mut start_angle = None;
-    let end_angle = None;
+    let mut end_angle = None;
 
     let path = Path::new(|p| {
         match draw_mode {
@@ -2560,51 +2565,51 @@ fn build_arc_path(arc: &Arc,
                             pts[1], 
                         )));
                 }
-                p.arc_to(pts[0], pts[1], arc.radius);
+                p.move_to(arc.points[0]);
                 p.line_to(arc.points[1]);
                 
-                for pt in pts {
-                    p.circle(pt, 3.0);
-                }
-
                 p.circle(mid_point, 3.0);
+                p.circle(arc.points[1], 3.0);
+                p.circle(arc.points[2], 3.0);
+                let edit_arc = canvas::path::Arc{ 
+                                            center: arc.points[0], 
+                                            radius: arc.radius, 
+                                            start_angle: arc.start_angle, 
+                                            end_angle: arc.end_angle, 
+                                        };
+                p.arc(edit_arc);
             },
             DrawMode::New => {
                 let cursor = pending_cursor.unwrap();
                 let pts_len = arc.points.len();
                 
-                if pts_len >= 1 {
+                if pts_len == 1 {
                     p.move_to(arc.points[0]);
                     p.line_to(cursor);
-
-                    let mut p2 = cursor;
-                    if pts_len == 2 {p2 = arc.points[1]}
-
-                    if arc.points[0].y >= cursor.y {
-                        start_angle = 
-                            Some(get_angle_of_vectors(
-                                arc.points[0], 
-                                Point::new(-arc.points[0].x, arc.points[0].y), 
-                                p2)+adjustment);
-                    }
+                    start_angle = Some(get_angle_of_vectors(
+                            arc.points[0], 
+                            Point::new(arc.points[0].x*-1.0, arc.points[0].y), 
+                            cursor));
                 }
                 if pts_len == 2 {
+                    p.move_to(arc.points[0]);
                     p.line_to(arc.points[1]);
                     start_angle = Some(arc.start_angle);
-                    let end_angle = 
-                        Some(get_angle_of_vectors(
+                    let mut e_angle = 
+                        get_angle_of_vectors(
                             arc.points[0], 
                             arc.points[1], 
-                            cursor)+adjustment);
-                    
+                            cursor);
+                    e_angle = arc.start_angle + e_angle;
                     let radius = arc.points[0].distance(arc.points[1]);
                     let new_arc = canvas::path::Arc{ 
                                             center: arc.points[0], 
                                             radius, 
                                             start_angle: arc.start_angle, 
-                                            end_angle: end_angle.unwrap(), 
+                                            end_angle: e_angle, 
                                         };
-                    p.arc(new_arc)
+                    p.arc(new_arc);
+                    end_angle = Some(e_angle);
                 };
             },
             DrawMode::Rotate => {

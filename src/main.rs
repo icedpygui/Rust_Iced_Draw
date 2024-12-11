@@ -15,7 +15,7 @@ use iced::widget::container::Id;
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_angle_of_vectors, get_draw_mode_and_status, 
+use draw_canvas::{get_draw_mode_and_status, 
     get_widget_id, set_widget_mode_or_status, 
     Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, 
     Line, PolyLine, Polygon, RightTriangle, Widget};
@@ -34,7 +34,6 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct Example {
     canvas_state: draw_canvas::CanvasState,
-    canvas_curves: HashMap<Id, CanvasWidget>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,21 +60,21 @@ impl Example {
                 if draw_mode == DrawMode::New {
                     let id = get_widget_id(&widget);
                     let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
-                    self.canvas_curves.insert(id, widget);
+                    self.canvas_state.curves.insert(id, widget);
                 } else {
                     if draw_status == DrawStatus::Completed {
                         widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
                     }
                     let id = get_widget_id(&widget);
                     self.canvas_state.edit_widget_id = Some(id.clone());
-                    self.canvas_curves.entry(id).and_modify(|k| *k= widget);
+                    self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
                 }
 
                 self.canvas_state.request_redraw();
             }
             Message::Clear => {
+                self.canvas_state.curves.clear();
                 self.canvas_state = draw_canvas::CanvasState::default();
-                self.canvas_curves.clear();
             }
             Message::ModeSelected(mode) => {
                 let mode = DrawMode::to_enum(mode.clone());
@@ -84,7 +83,7 @@ impl Example {
                         self.canvas_state.draw_mode = DrawMode::DrawAll;
                     },
                     DrawMode::Edit => {
-                        if self.canvas_curves.is_empty() {
+                        if self.canvas_state.curves.is_empty() {
                             return
                         }
                         self.canvas_state.draw_mode = DrawMode::Edit;
@@ -144,12 +143,12 @@ impl Example {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let widgets = serde_json::from_str(&data).expect("Unable to parse");
-                self.canvas_curves = import_widgets(widgets);
+                self.canvas_state.curves = import_widgets(widgets);
                 self.canvas_state.request_redraw();
             }
             Message::Save => {
                 let path = Path::new("./resources/data.json");
-                let widgets = convert_to_export(&self.canvas_curves);
+                let widgets = convert_to_export(&self.canvas_state.curves);
                 let _ = save(path, &widgets);
             }
             Message::ColorSelected(color_str) => {
@@ -349,7 +348,7 @@ impl Example {
 
         let draw =  
             container(self.canvas_state
-                .view(&self.canvas_curves)
+                .view(&self.canvas_state.curves)
                 .map(Message::WidgetDraw))
                 .into();
         
@@ -431,32 +430,22 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
         let color = convert_to_color(&widget.color);
         let width = widget.width;
         let draw_mode = DrawMode::DrawAll;
+        let radius = mid_point.distance(points[1]);
 
         match widget.name {
             Widget::None => {
             },
             Widget::Arc => {
-                let start_angle = 
-                    get_angle_of_vectors(
-                        points[0], 
-                        Point::new(-points[0].x, points[0].y), points[1]
-                    )+Radians::PI;
-                let end_angle = 
-                    get_angle_of_vectors(
-                        points[0], 
-                        points[1], 
-                        points[2],
-                    )+Radians::PI;
                 let id = Id::unique();
                 let arc = Arc {
                     id: id.clone(),
-                    points: points,
+                    points,
                     mid_point,
-                    radius: 0.0,
+                    radius,
                     color,
                     width,
-                    start_angle,
-                    end_angle,
+                    start_angle: Radians(other_point.x),
+                    end_angle: Radians(other_point.y),
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
@@ -599,7 +588,8 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
                     (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, Color::TRANSPARENT, 0.0,)
                 },
                 CanvasWidget::Arc(arc) => {
-                    (Widget::Arc, &arc.points, arc.mid_point, Point::default(), 0, 0.0, arc.color, arc.width)
+                    let other_point = Point{ x: arc.start_angle.0, y: arc.end_angle.0 };
+                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.color, arc.width)
                 },
                 CanvasWidget::Bezier(bz) => {
                     (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, bz.color, bz.width)
