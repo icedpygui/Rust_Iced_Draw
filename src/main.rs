@@ -610,7 +610,7 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
                     (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, pl.color, pl.width)
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, Point::default(), 3, tr.degrees, tr.color, tr.width)
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, tr.color, tr.width)
                 },
         };
 
