@@ -1,9 +1,11 @@
 
 use std::collections::HashMap;
 use std::f32::consts::PI;
+use iced::keyboard::Key;
 use iced::widget::canvas::path::arc::Elliptical;
 use iced::widget::container::Id;
-use iced::{mouse, Color, Radians, Vector};
+use iced::widget::text::{LineHeight, Shaping};
+use iced::{alignment, mouse, Color, Font, Pixels, Radians, Vector};
 use iced::widget::canvas::event::{self, Event};
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
@@ -21,6 +23,7 @@ pub enum CanvasWidget {
     PolyLine(PolyLine),
     Polygon(Polygon),
     RightTriangle(RightTriangle),
+    Text(Text),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq,)]
@@ -380,6 +383,44 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                 };
                 (event::Status::Captured, message)
             },
+            Event::Keyboard(key_event) => {
+                let message = match key_event {
+                    iced::keyboard::Event::KeyPressed { 
+                        key:_, 
+                        modified_key, 
+                        physical_key:_, 
+                        location:_, 
+                        modifiers:_, 
+                        text:_ } => {
+                            if self.state.selected_radio_widget == Some(Widget::Text) {
+                                match self.state.draw_mode {
+                                    DrawMode::DrawAll => todo!(),
+                                    DrawMode::Edit => todo!(),
+                                    DrawMode::New => {
+                                        match program_state {
+                                            Some(Pending::New { 
+                                                widget 
+                                            }) => {
+                                                let update_widget = add_keypress(widget, modified_key);
+                                                *program_state = Some(Pending::New { 
+                                                    widget: update_widget.unwrap(), 
+                                                });
+                                            },
+                                            _ => (),
+                                            
+                                        }
+                                    },
+                                    DrawMode::Rotate => todo!(),
+                                }
+                            }
+                            None
+                        },
+                    iced::keyboard::Event::KeyReleased {key: _, location:_, modifiers:_ } => None,
+                    iced::keyboard::Event::ModifiersChanged(_) => None,
+                };
+
+                (event::Status::Captured, message)
+            },
             _ => (event::Status::Ignored, None),
         }
     }
@@ -581,6 +622,21 @@ impl DrawCurve {
                             (Some(path), Some(tr.color), Some(tr.width))
                         }
                     },
+                    CanvasWidget::Text(txt) => {
+                        // skip if being editied or rotated
+                        if txt.status == DrawStatus::Inprogress {
+                            (None, None, None)
+                        } else {
+                            frame.fill_text(build_text_path (
+                                txt,
+                                txt.draw_mode,
+                                None,
+                                0.0,
+                            ));
+                            (None, Some(txt.color), None)
+                        }
+                        
+                    }
                     CanvasWidget::None => (None, None, None),
                 };
                 
@@ -746,6 +802,16 @@ impl Pending {
                                 );
                             (path, r_tr.color, r_tr.width, Some(mid_point), Some(degrees), None)
                         },
+                        CanvasWidget::Text(txt) => {
+                            frame.fill_text(build_text_path(
+                                    txt, 
+                                    DrawMode::New, 
+                                    Some(cursor), 
+                                    0.0
+                                ));
+                                
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
+                        }
                         _ => (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
                     };
 
@@ -758,6 +824,8 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
@@ -770,10 +838,12 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
-
+                    
                     frame.stroke(
                         &path,
                         Stroke::default()
@@ -887,6 +957,9 @@ impl Pending {
                                 );
                                 (path, tr.color, tr.width)
                             },
+                            CanvasWidget::Text(_txt) => {
+                                (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
+                            }
                         };
 
                     frame.stroke(
@@ -1018,6 +1091,9 @@ impl Pending {
                                 );
                             (path, tr.color, tr.width, mid_point, None, Some(degrees))
                         },
+                        CanvasWidget::Text(_txt) => {
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
+                        }
                     };
 
                     if degrees_left.is_some() {
@@ -1028,6 +1104,8 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
@@ -1040,6 +1118,8 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
@@ -1165,6 +1245,9 @@ impl Pending {
                                 );
                             (path, tr.color, tr.width, tr.mid_point, None, Some(pending_degrees))
                         },
+                        CanvasWidget::Text(_txt) => {
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
+                        }
                         CanvasWidget::None => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
                         }
@@ -1178,6 +1261,8 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
@@ -1190,6 +1275,8 @@ impl Pending {
                             color: Color::WHITE,
                             size: 10.0.into(),
                             content: degrees,
+                            horizontal_alignment: alignment::Horizontal::Center,
+                            vertical_alignment: alignment::Vertical::Center,
                             ..canvas::Text::default()
                         });
                     }
@@ -1312,6 +1399,23 @@ pub struct RightTriangle {
     pub status: DrawStatus,
 }
 
+#[derive(Debug, Clone)]
+pub struct Text {
+    pub id: Id,
+    pub content: String,
+    pub position: Point,
+    pub color: Color,
+    pub size: Pixels,
+    pub line_height: LineHeight,
+    pub font: Font,
+    pub horizontal_alignment: alignment::Horizontal,
+    pub vertical_alignment: alignment::Vertical,
+    pub shaping: Shaping,
+    pub degrees: f32,
+    pub draw_mode: DrawMode,
+    pub status: DrawStatus,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq,)]
 pub enum Widget {
     None,
@@ -1323,6 +1427,7 @@ pub enum Widget {
     PolyLine,
     Polygon,
     RightTriangle,
+    Text,
 }
 
 fn add_new_widget(widget: Widget, 
@@ -1455,6 +1560,25 @@ fn add_new_widget(widget: Widget,
                 }
             )
         },
+        Widget::Text => {
+            CanvasWidget::Text(
+                Text {
+                    id: Id::unique(),
+                    content: String::new(),
+                    position: Point::default(),
+                    color,
+                    size: Pixels(16.0),
+                    line_height: LineHeight::Relative(1.2),
+                    font: Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Left,
+                    vertical_alignment: alignment::Vertical::Top,
+                    shaping: Shaping::Basic,
+                    degrees: 0.0,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                }
+            )
+        },
     }
 }
 
@@ -1554,6 +1678,10 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
             
             Some(CanvasWidget::RightTriangle(tr))
         },
+        CanvasWidget::Text(mut txt) => {
+            txt.degrees = 0.0;
+            Some(CanvasWidget::Text(txt))
+        }
     }
 }
 
@@ -1812,6 +1940,9 @@ fn update_edited_widget(widget: CanvasWidget,
             tr.status = status;
             CanvasWidget::RightTriangle(tr)
         },
+        CanvasWidget::Text(txt) => {
+            CanvasWidget::Text(txt)
+        }
     }
 }
 
@@ -1906,6 +2037,26 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             }
             (CanvasWidget::RightTriangle(tr.clone()), tr.degrees)
         },
+        CanvasWidget::Text(txt) => {
+            (CanvasWidget::Text(txt.clone()), 0.0)
+        }
+    }
+}
+
+fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget> {
+    match widget {
+        CanvasWidget::Text(txt) => {
+            match modified.as_ref() {
+                Key::Named(_) => (),
+                Key::Character(c) => {
+                    txt.content.push_str(c);
+                },
+                Key::Unidentified => (),
+            }
+            
+            Some(CanvasWidget::Text(txt.clone()))
+        },
+        _ => None
     }
 }
 
@@ -1989,6 +2140,15 @@ pub fn set_widget_mode_or_status(widget: CanvasWidget,
             }
             CanvasWidget::RightTriangle(tr)
         },
+        CanvasWidget::Text(mut txt) => {
+            if mode.is_some() {
+                txt.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                txt.status = status.unwrap();
+            }
+            CanvasWidget::Text(txt)
+        }
     }
 }
 
@@ -2139,6 +2299,18 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             
             (CanvasWidget::RightTriangle(rt), finished)
         },
+        CanvasWidget::Text(text) => {
+            let mut txt = text.clone();
+            
+            let finished = if txt.position == Point::default() {
+                txt.position = cursor;
+                false
+            } else {
+                true
+            };
+            
+            (CanvasWidget::Text(txt), finished)
+        }
     }
 }
 
@@ -2303,6 +2475,9 @@ fn find_closest_point_index(widget: &CanvasWidget,
                 (None, false, true)
             }
         },
+        CanvasWidget::Text(_txt) => {
+            (None, true, false)
+        }
     }
     
 }
@@ -2343,6 +2518,7 @@ pub fn get_widget_id(widget: &CanvasWidget) -> Id {
         CanvasWidget::PolyLine(pl) => pl.id.clone(),
         CanvasWidget::Polygon(pg) => pg.id.clone(),
         CanvasWidget::RightTriangle(tr) => tr.id.clone(),
+        CanvasWidget::Text(txt) => txt.id.clone(),
     }
 }
 
@@ -2357,6 +2533,7 @@ fn get_widget_degrees(widget: &CanvasWidget) -> Option<f32> {
         CanvasWidget::PolyLine(poly_line) => Some(poly_line.degrees),
         CanvasWidget::Polygon(polygon) => Some(polygon.degrees),
         CanvasWidget::RightTriangle(right_triangle) => Some(right_triangle.degrees),
+        CanvasWidget::Text(txt) => Some(txt.degrees),
     }
 }
 
@@ -2371,6 +2548,7 @@ pub fn get_draw_mode_and_status(widget: &CanvasWidget) -> (DrawMode, DrawStatus)
         CanvasWidget::PolyLine(pl) => (pl.draw_mode, pl.status),
         CanvasWidget::Polygon(pg) => (pg.draw_mode, pg.status),
         CanvasWidget::RightTriangle(tr) => (tr.draw_mode, tr.status),
+        CanvasWidget::Text(txt) => (txt.draw_mode, txt.status),
     }
 }
 
@@ -2402,6 +2580,9 @@ fn get_distance_to_mid_point(widget: &CanvasWidget, cursor: Point) -> f32 {
             CanvasWidget::RightTriangle(tr) => {
                 cursor.distance(tr.mid_point)
             },
+            CanvasWidget::Text(txt) => {
+                cursor.distance(txt.position)
+            }
         }
 
 }
@@ -2443,6 +2624,9 @@ pub fn get_mid_geometry(pts: &[Point], curve_type: Widget) -> Point {
             let y = (pts[0].y + pts[1].y + pts[2].y)/3.0;
             Point {x, y}
         },
+        Widget::Text => {
+            pts[0]
+        }
         Widget::None => Point::default(),
     }
     
@@ -3386,42 +3570,72 @@ fn build_right_triangle_path(tr: &RightTriangle,
 
 }
 
+fn build_text_path (txt: &Text, 
+                    draw_mode: DrawMode, 
+                    _pending_cursor: Option<Point>,
+                    _degrees: f32,
+                    ) -> canvas::Text {
 
-// #[derive(Debug)]
-// pub struct Counter {
-//     pub counter_draw_curve: u64,
-//     pub counter_draw_pending_left_mouse: u64,
-// }
+    match draw_mode {
+        DrawMode::DrawAll => {
+            canvas::Text {
+                content: txt.content.clone(),
+                position: txt.position,
+                color: txt.color,
+                size: txt.size,
+                line_height: txt.line_height,
+                font: txt.font,
+                horizontal_alignment: txt.horizontal_alignment,
+                vertical_alignment: txt.vertical_alignment,
+                shaping: txt.shaping,
+            }
+        },
+        DrawMode::Edit => {
+            canvas::Text {
+                content: txt.content.clone(),
+                position: txt.position,
+                color: txt.color,
+                size: txt.size,
+                line_height: txt.line_height,
+                font: txt.font,
+                horizontal_alignment: txt.horizontal_alignment,
+                vertical_alignment: txt.vertical_alignment,
+                shaping: txt.shaping,
+            }
+        },
+        DrawMode::New => {
+            canvas::Text {
+                content: txt.content.clone(),
+                position: txt.position,
+                color: txt.color,
+                size: txt.size,
+                line_height: txt.line_height,
+                font: txt.font,
+                horizontal_alignment: txt.horizontal_alignment,
+                vertical_alignment: txt.vertical_alignment,
+                shaping: txt.shaping,
+            }
+        },
+        DrawMode::Rotate => {
+            canvas::Text {
+                content: txt.content.clone(),
+                position: txt.position,
+                color: txt.color,
+                size: txt.size,
+                line_height: txt.line_height,
+                font: txt.font,
+                horizontal_alignment: txt.horizontal_alignment,
+                vertical_alignment: txt.vertical_alignment,
+                shaping: txt.shaping,
+            }
+        },
+    }
 
-// pub static COUNTER: Mutex<Counter> = Mutex::new(Counter {
-//     counter_draw_curve: 0,
-//     counter_draw_pending_left_mouse: 0,
-// });
+                  
+}
 
-// pub fn access_counter() -> MutexGuard<'static, Counter> {
-//     COUNTER.lock().unwrap()
-// }
 
-// pub fn reset_counter() {
-//     let mut cnt = access_counter();
-//     cnt.counter_draw_curve = 0;
-//     drop(cnt);
-// }
 
-// pub fn increment_draw_curve_counter() {
-//     let mut cnt = access_counter();
-//     cnt.counter_draw_curve += 1;
-//     println!("DrawCurve_draw_all() - {}", cnt.counter_draw_curve);
-//     drop(cnt);
-
-// }
-
-// pub fn increment_counter_draw_pending_left_mouse() {
-//     let mut cnt = access_counter();
-//     cnt.counter_draw_pending_left_mouse += 1;
-//     println!("DrawPending-> update()-> mouse left- {}", cnt.counter_draw_pending_left_mouse);
-//     drop(cnt);
-// }
 
 
 

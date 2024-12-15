@@ -6,19 +6,16 @@ use std::path::Path;
 
 use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
 use iced::keyboard::key;
+use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text, text_input, vertical_space};
-use iced::{event, keyboard, Color, Element, Event, Point, 
-    Radians, Subscription, Theme, Vector};
+use iced::{alignment, event, keyboard, Color, Element, Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
 use iced::widget::container::Id;
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_draw_mode_and_status, 
-    get_widget_id, set_widget_mode_or_status, 
-    Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, 
-    Line, PolyLine, Polygon, RightTriangle, Widget};
+use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, Line, PolyLine, Polygon, RightTriangle, Text, Widget};
 mod colors;
 
 
@@ -123,6 +120,9 @@ impl Example {
                     Widget::RightTriangle => {
                         self.canvas_state.selected_radio_widget = Some(Widget::RightTriangle);
                     },
+                    Widget::Text => {
+                        self.canvas_state.selected_radio_widget = Some(Widget::Text);
+                    }
                     Widget::None => (),
                 } 
             },
@@ -261,6 +261,14 @@ impl Example {
                 Message::RadioSelected,
                 ).into();
 
+        let txt = 
+            radio(
+                "Text",
+                Widget::Text,
+                self.canvas_state.selected_radio_widget,
+                Message::RadioSelected,
+                ).into();
+
         let color_opt = 
             [
             "Primary".to_string(),
@@ -333,6 +341,7 @@ impl Example {
             polygon,
             polyline,
             r_triangle,
+            txt,
             mode,
             load_save_row,
             poly_pts_input,
@@ -409,6 +418,7 @@ impl ExportColor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportWidget {
     pub name: Widget,
+    pub content: String,
     pub points: Vec<ExportPoint>,
     pub poly_points: usize,
     pub mid_point: ExportPoint,
@@ -561,6 +571,25 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                 };
                 curves.insert(id, CanvasWidget::RightTriangle(tr));
             },
+            Widget::Text => {
+                let id = Id::unique();
+                let txt = Text {
+                    id: id.clone(),
+                    content: widget.content.clone(),
+                    position: other_point,
+                    color,
+                    size: Pixels(16.0),
+                    line_height: LineHeight::Relative(1.2),
+                    font: Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Left,
+                    vertical_alignment: alignment::Vertical::Top,
+                    shaping: Shaping::Basic,
+                    degrees: widget.rotation,
+                    draw_mode,
+                    status: DrawStatus::Completed,
+                };
+                curves.insert(id, CanvasWidget::Text(txt));
+            }
         }
     }
 
@@ -581,36 +610,40 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
             poly_points, 
             rotation,
             color, 
-            width, 
+            width,
+            content ,
             ) = 
             match widget {
                 CanvasWidget::None => {
-                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, Color::TRANSPARENT, 0.0,)
+                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, Color::TRANSPARENT, 0.0, String::new())
                 },
                 CanvasWidget::Arc(arc) => {
                     let other_point = Point{ x: arc.start_angle.0, y: arc.end_angle.0 };
-                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.color, arc.width)
+                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.color, arc.width, String::new())
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, bz.color, bz.width)
+                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, bz.color, bz.width, String::new())
                 },
                 CanvasWidget::Circle(cir) => {
-                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.color, cir.width)
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.color, cir.width, String::new())
                 },
                 CanvasWidget::Ellipse(ell) => {
-                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, ell.color, ell.width)
+                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, ell.color, ell.width, String::new())
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, ln.color, ln.width)
+                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, ln.color, ln.width, String::new())
                 },
                 CanvasWidget::Polygon(pg) => {
-                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, pg.color, pg.width)
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, pg.color, pg.width, String::new())
                 },
                 CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, pl.color, pl.width)
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, pl.color, pl.width, String::new())
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, tr.color, tr.width)
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, tr.color, tr.width, String::new())
+                },
+                CanvasWidget::Text(txt) => {
+                    (Widget::Text, &vec![], Point::default(), txt.position, 3, txt.degrees, txt.color, 0.0, txt.content.clone())
                 },
         };
 
@@ -625,6 +658,7 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
         export.push(
             ExportWidget{
                 name,
+                content,
                 points: x_points,
                 poly_points, 
                 mid_point: x_mid_pt,
