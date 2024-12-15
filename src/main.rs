@@ -9,7 +9,7 @@ use iced::keyboard::key;
 use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text, text_input, vertical_space};
-use iced::{alignment, event, keyboard, Color, Element, Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
+use iced::{alignment, event, keyboard, time, Color, Element, Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
 use iced::widget::container::Id;
 
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,7 @@ enum Message {
     ColorSelected(String),
     PolyInput(String),
     WidthInput(String),
+    Tick,
 }
 
 impl Example {
@@ -139,6 +140,11 @@ impl Example {
                 self.canvas_state.escape_pressed = false;
             },
             Message::Event(_) => (),
+            Message::Tick => {
+                self.canvas_state.elapsed_time += self.canvas_state.timer_duration;
+                self.canvas_state.blink = !self.canvas_state.blink;
+                self.canvas_state.request_redraw();
+            }
             Message::Load => {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
@@ -187,7 +193,19 @@ impl Example {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        event::listen().map(Message::Event)
+        let mut subscriptions = vec![];
+        
+        if self.canvas_state.timer_event_enabled {
+            subscriptions.push(time::every(
+                iced::time::Duration::from_millis(
+                    self.canvas_state.timer_duration))
+                    .map(|_| Message::Tick));
+        }
+        
+        subscriptions.push(event::listen().map(Message::Event)) ;
+        
+        Subscription::batch(subscriptions)
+        
     }
 
     fn view(&self) -> Element<Message> {

@@ -78,6 +78,10 @@ pub struct CanvasState {
     pub selected_step_degrees: f32,
     pub selected_width: f32,
     pub selected_width_str: String,
+    pub timer_event_enabled: bool,
+    pub timer_duration: u64,
+    pub elapsed_time: u64,
+    pub blink: bool,
 }
 
 impl Default for CanvasState {
@@ -96,6 +100,10 @@ impl Default for CanvasState {
                 selected_step_degrees: 6.0,
                 selected_width: 2.0,
                 selected_width_str: "".to_string(),
+                timer_event_enabled: true,
+                timer_duration: 1000,
+                elapsed_time: 0,
+                blink: false,
              }
         }
 }
@@ -387,34 +395,11 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                 let message = match key_event {
                     iced::keyboard::Event::KeyPressed { 
                         key:_, 
-                        modified_key, 
+                        modified_key:_, 
                         physical_key:_, 
                         location:_, 
                         modifiers:_, 
-                        text:_ } => {
-                            if self.state.selected_radio_widget == Some(Widget::Text) {
-                                match self.state.draw_mode {
-                                    DrawMode::DrawAll => todo!(),
-                                    DrawMode::Edit => todo!(),
-                                    DrawMode::New => {
-                                        match program_state {
-                                            Some(Pending::New { 
-                                                widget 
-                                            }) => {
-                                                let update_widget = add_keypress(widget, modified_key);
-                                                *program_state = Some(Pending::New { 
-                                                    widget: update_widget.unwrap(), 
-                                                });
-                                            },
-                                            _ => (),
-                                            
-                                        }
-                                    },
-                                    DrawMode::Rotate => todo!(),
-                                }
-                            }
-                            None
-                        },
+                        text:_ } => None,
                     iced::keyboard::Event::KeyReleased {key: _, location:_, modifiers:_ } => None,
                     iced::keyboard::Event::ModifiersChanged(_) => None,
                 };
@@ -436,7 +421,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
         let content =
             self.state.cache.draw(renderer, bounds.size(), 
                             |frame| {
-                DrawCurve::draw_all(self.curves, frame, theme);
+                DrawCurve::draw_all(self.curves, self.state.blink, self.state.elapsed_time, frame, theme);
 
                 frame.stroke(
                     &Path::rectangle(Point::ORIGIN, frame.size()),
@@ -473,7 +458,7 @@ pub struct DrawCurve {
 }
 
 impl DrawCurve {
-    fn draw_all(curves: &HashMap<Id, CanvasWidget>, frame: &mut Frame, _theme: &Theme) {
+    fn draw_all(curves: &HashMap<Id, CanvasWidget>, blink: bool, time: u64, frame: &mut Frame, _theme: &Theme) {
         // This draw only occurs at the completion of the 
         // widget(update occurs) and cache is cleared
         
@@ -623,18 +608,16 @@ impl DrawCurve {
                         }
                     },
                     CanvasWidget::Text(txt) => {
-                        // skip if being editied or rotated
-                        if txt.status == DrawStatus::Inprogress {
-                            (None, None, None)
-                        } else {
-                            frame.fill_text(build_text_path (
-                                txt,
-                                txt.draw_mode,
-                                None,
-                                0.0,
-                            ));
-                            (None, Some(txt.color), None)
-                        }
+                        dbg!(time, blink);
+                        frame.fill_text(build_text_path (
+                            txt,
+                            txt.draw_mode,
+                            None,
+                            0.0,
+                            blink,
+                        ));
+                        (None, Some(txt.color), None)
+                        
                         
                     }
                     CanvasWidget::None => (None, None, None),
@@ -807,7 +790,8 @@ impl Pending {
                                     txt, 
                                     DrawMode::New, 
                                     Some(cursor), 
-                                    0.0
+                                    0.0,
+                                    false,
                                 ));
                                 
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
@@ -3574,6 +3558,7 @@ fn build_text_path (txt: &Text,
                     draw_mode: DrawMode, 
                     _pending_cursor: Option<Point>,
                     _degrees: f32,
+                    blink: bool,
                     ) -> canvas::Text {
 
     match draw_mode {
@@ -3604,8 +3589,14 @@ fn build_text_path (txt: &Text,
             }
         },
         DrawMode::New => {
+            let mut content = txt.content.clone();
+            if blink {
+                dbg!("pushing |");
+                content.push_str("|");
+            };
+            dbg!(&content);
             canvas::Text {
-                content: txt.content.clone(),
+                content,
                 position: txt.position,
                 color: txt.color,
                 size: txt.size,
