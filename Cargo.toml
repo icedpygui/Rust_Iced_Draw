@@ -9,4 +9,4 @@ publish = false
 iced = { version = "0.13.1", features = ["debug", "canvas", "tokio"]}
 serde = "*"
 serde_json = "*"
-
+phf = { version = "0.11", default-features = false }

@@ -1,7 +1,7 @@
 [
   {
     "name": "Text",
-    "content": "text",
+    "content": "This is some text",
     "points": [],
     "poly_points": 3,
     "mid_point": {
@@ -9,30 +9,8 @@
       "y": 0.0
     },
     "other_point": {
-      "x": 308.01648,
-      "y": 214.20844
-    },
-    "rotation": 0.0,
-    "color": {
-      "r": 1.0,
-      "g": 1.0,
-      "b": 1.0,
-      "a": 1.0
-    },
-    "width": 0.0
-  },
-  {
-    "name": "Text",
-    "content": "text",
-    "points": [],
-    "poly_points": 3,
-    "mid_point": {
-      "x": 0.0,
-      "y": 0.0
-    },
-    "other_point": {
-      "x": 302.73157,
-      "y": 340.18372
+      "x": 292.01257,
+      "y": 367.0827
     },
     "rotation": 0.0,
     "color": {

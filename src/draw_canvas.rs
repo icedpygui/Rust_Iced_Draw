@@ -11,6 +11,8 @@ use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
 use serde::{Deserialize, Serialize};
 
+use crate::fonts::FONT_SIZE;
+
 #[derive(Debug, Clone, Default)]
 pub enum CanvasWidget {
     #[default]
@@ -24,6 +26,7 @@ pub enum CanvasWidget {
     Polygon(Polygon),
     RightTriangle(RightTriangle),
     Text(Text),
+    FreeHand(FreeHand),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq,)]
@@ -39,6 +42,8 @@ pub enum DrawMode {
 pub enum DrawStatus {
     Inprogress,
     Completed,
+    TextInProgress,
+    TextCompleted,
 }
 
 // used to display text widget
@@ -78,6 +83,8 @@ pub struct CanvasState {
     pub selected_step_degrees: f32,
     pub selected_width: f32,
     pub selected_width_str: String,
+    pub selected_font_width_str: String,
+    pub selected_font_width: f32,
     pub timer_event_enabled: bool,
     pub timer_duration: u64,
     pub elapsed_time: u64,
@@ -96,12 +103,14 @@ impl Default for CanvasState {
                 selected_color: Color::WHITE,
                 selected_color_str: Some("White".to_string()),
                 selected_poly_points: 3,
-                selected_poly_points_str: "".to_string(),
+                selected_poly_points_str: String::new(),
                 selected_step_degrees: 6.0,
                 selected_width: 2.0,
-                selected_width_str: "".to_string(),
+                selected_width_str: String::new(),
+                selected_font_width_str: String::new(),
+                selected_font_width: 10.0,
                 timer_event_enabled: true,
-                timer_duration: 1000,
+                timer_duration: 750,
                 elapsed_time: 0,
                 blink: false,
              }
@@ -260,9 +269,9 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                                 cursor_position,
                                             );
                                         *program_state = Some(Pending::New {
-                                            widget,
+                                            widget: widget.clone(),
                                         });
-                                        None
+                                        Some(widget)
                                     },
                                     // The second click is a Some() since it was created above
                                     // The pending is carrying the previous info
@@ -280,9 +289,15 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                             complete_new_widget(widget, cursor_position)
                                         } else {
                                             *program_state = Some(Pending::New {
-                                                widget,
+                                                widget: widget.clone(),
                                             });
-                                            None
+                                            
+                                            let some_text = if self.state.selected_radio_widget.unwrap() == Widget::Text {
+                                                Some(widget)
+                                            } else {
+                                                None
+                                            };
+                                            some_text
                                         }
                                     },
                                     _ => None,
@@ -395,11 +410,35 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                 let message = match key_event {
                     iced::keyboard::Event::KeyPressed { 
                         key:_, 
-                        modified_key:_, 
+                        modified_key, 
                         physical_key:_, 
                         location:_, 
                         modifiers:_, 
-                        text:_ } => None,
+                        text:_ } => {
+                            if self.state.selected_radio_widget == Some(Widget::Text) {
+                                match program_state {
+                                    None => None,
+                                    Some(
+                                        Pending::New { widget }) => {
+                                            match add_keypress(widget, modified_key) {
+                                                Some(widget) => {
+                                                    *program_state = Some(Pending::New { 
+                                                        widget: widget.clone(), 
+                                                    });
+                                                    Some(widget)
+                                                },
+                                                None => {
+                                                    *program_state = None;
+                                                    None
+                                                }
+                                            }
+                                        },
+                                        _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        },
                     iced::keyboard::Event::KeyReleased {key: _, location:_, modifiers:_ } => None,
                     iced::keyboard::Event::ModifiersChanged(_) => None,
                 };
@@ -421,7 +460,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
         let content =
             self.state.cache.draw(renderer, bounds.size(), 
                             |frame| {
-                DrawCurve::draw_all(self.curves, self.state.blink, self.state.elapsed_time, frame, theme);
+                DrawCurve::draw_all(self.curves, self.state.blink, frame, theme);
 
                 frame.stroke(
                     &Path::rectangle(Point::ORIGIN, frame.size()),
@@ -458,10 +497,9 @@ pub struct DrawCurve {
 }
 
 impl DrawCurve {
-    fn draw_all(curves: &HashMap<Id, CanvasWidget>, blink: bool, time: u64, frame: &mut Frame, _theme: &Theme) {
+    fn draw_all(curves: &HashMap<Id, CanvasWidget>, blink: bool, frame: &mut Frame, _theme: &Theme) {
         // This draw only occurs at the completion of the 
         // widget(update occurs) and cache is cleared
-        
         for (_id, widget) in curves.iter() {
             // if first click, skip the curve to be edited so that it 
             // will not be seen until the second click.  Otherwise is shows
@@ -608,17 +646,17 @@ impl DrawCurve {
                         }
                     },
                     CanvasWidget::Text(txt) => {
-                        dbg!(time, blink);
-                        frame.fill_text(build_text_path (
-                            txt,
-                            txt.draw_mode,
-                            None,
-                            0.0,
-                            blink,
-                        ));
-                        (None, Some(txt.color), None)
+                        let frame_path = 
+                            build_text_path (
+                                txt,
+                                txt.draw_mode,
+                                None,
+                                0.0,
+                                blink,
+                            );
+                        frame.fill_text(frame_path.0);
                         
-                        
+                        (frame_path.1, Some(txt.color), Some(1.0))
                     }
                     CanvasWidget::None => (None, None, None),
                 };
@@ -786,13 +824,14 @@ impl Pending {
                             (path, r_tr.color, r_tr.width, Some(mid_point), Some(degrees), None)
                         },
                         CanvasWidget::Text(txt) => {
-                            frame.fill_text(build_text_path(
+                            let frame_path = build_text_path(
                                     txt, 
                                     DrawMode::New, 
                                     Some(cursor), 
                                     0.0,
                                     false,
-                                ));
+                                );
+                            frame.fill_text(frame_path.0);
                                 
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
                         }
@@ -1398,6 +1437,7 @@ pub struct Text {
     pub degrees: f32,
     pub draw_mode: DrawMode,
     pub status: DrawStatus,
+    pub blink_position: usize,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq,)]
@@ -1553,13 +1593,14 @@ fn add_new_widget(widget: Widget,
                     color,
                     size: Pixels(16.0),
                     line_height: LineHeight::Relative(1.2),
-                    font: Font::default(),
+                    font: Default::default(),
                     horizontal_alignment: alignment::Horizontal::Left,
                     vertical_alignment: alignment::Vertical::Top,
                     shaping: Shaping::Basic,
                     degrees: 0.0,
                     draw_mode,
-                    status: DrawStatus::Inprogress,
+                    status: DrawStatus::TextInProgress,
+                    blink_position: 0,
                 }
             )
         },
@@ -1664,6 +1705,7 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
         },
         CanvasWidget::Text(mut txt) => {
             txt.degrees = 0.0;
+            txt.status = DrawStatus::TextCompleted;
             Some(CanvasWidget::Text(txt))
         }
     }
@@ -2028,17 +2070,69 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
 }
 
 fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget> {
+    let mut escape = false;
     match widget {
         CanvasWidget::Text(txt) => {
             match modified.as_ref() {
-                Key::Named(_) => (),
+                Key::Named(named) => {
+                    match named {
+                        iced::keyboard::key::Named::Enter => {
+                            txt.content.push_str("\r");
+                            txt.blink_position += 1;
+                        },
+                        iced::keyboard::key::Named::Tab => {
+                            txt.content.push_str("    ");
+                            txt.blink_position += 4;
+                        },
+                        iced::keyboard::key::Named::Space => {
+                            txt.content.push_str(" ");
+                            txt.blink_position += 1;
+                        },
+                        iced::keyboard::key::Named::Delete => {
+                            if txt.blink_position < txt.content.len() {
+                                txt.content.remove(txt.blink_position);
+                            }
+                            // txt.blink_position -= 1;
+                        },
+                        iced::keyboard::key::Named::Escape => escape = true,
+                        iced::keyboard::key::Named::Backspace => {
+                            if !txt.content.is_empty() && txt.blink_position != 0 {
+                                txt.content.remove(txt.blink_position-1);
+                                txt.blink_position -= 1;
+                            }
+                        } 
+                        iced::keyboard::key::Named::ArrowLeft => {
+                            if txt.blink_position > 0 {
+                                txt.blink_position -= 1;
+                            }
+                        },
+                        iced::keyboard::key::Named::ArrowRight => {
+                            if txt.blink_position < txt.content.len() {
+                                txt.blink_position += 1;
+                            }
+                        }
+                        _ => ()
+                    }
+                },
                 Key::Character(c) => {
-                    txt.content.push_str(c);
+                    if txt.content.is_empty() {
+                        txt.content.push_str(c);
+                    } else if txt.blink_position < txt.content.len() {
+                        let c_char = c.chars().next().expect("string is empty");
+                        txt.content.insert(txt.blink_position, c_char );
+                    } else if txt.blink_position == txt.content.len() {
+                            txt.content.push_str(c);
+                    }
+                    txt.blink_position += 1;
                 },
                 Key::Unidentified => (),
             }
+            if escape {
+                None
+            } else {
+                Some(CanvasWidget::Text(txt.clone()))
+            }
             
-            Some(CanvasWidget::Text(txt.clone()))
         },
         _ => None
     }
@@ -2743,6 +2837,40 @@ fn to_degrees(radians_f32: &f32) -> f32 {
 fn to_radians(degrees: &f32) -> f32 {
     degrees * PI/180.0
 }
+
+fn get_blink_position(content: &String,
+                        text_position: Point, 
+                        blink_position: usize, 
+                        ) -> (Point, Point) {
+
+    let content = content[0..blink_position].to_string();
+    let mut size = 0.0;
+    for c in content.chars() {
+        if c != '\r' {
+            let value = FONT_SIZE.get(&c);
+            size += value.unwrap();
+        }
+    }
+    
+    let from_x = text_position.x + size;
+    let from_y = text_position.y;
+    let from = Point::new(from_x, from_y);
+    let to_y = from.y + 16.0 * 1.2;
+    let to = Point::new(from.x, to_y);
+    (from, to)
+}
+
+// fn on_event(/*...*/) -> event::Status {
+//         // ..
+//         let canvas_event = match event {
+//             core::Event::Mouse(mouse_event) => Some(Event::Mouse(mouse_event)),
+//             core::Event::Touch(touch_event) => Some(Event::Touch(touch_event)),
+//             core::Event::Keyboard(keyboard_event) => {
+//                 Some(Event::Keyboard(keyboard_event))
+//             }
+//             core::Event::Window(_) => None, // <-- no way to check for redraw requests
+//         };
+//     }
 
 fn build_polygon(mid_point: Point, pg_point: Point, poly_points: usize, mut degrees: f32) -> Vec<Point> {
     
@@ -3559,68 +3687,82 @@ fn build_text_path (txt: &Text,
                     _pending_cursor: Option<Point>,
                     _degrees: f32,
                     blink: bool,
-                    ) -> canvas::Text {
+                    ) -> (canvas::Text, Option<Path>) {
 
-    match draw_mode {
-        DrawMode::DrawAll => {
-            canvas::Text {
-                content: txt.content.clone(),
-                position: txt.position,
-                color: txt.color,
-                size: txt.size,
-                line_height: txt.line_height,
-                font: txt.font,
-                horizontal_alignment: txt.horizontal_alignment,
-                vertical_alignment: txt.vertical_alignment,
-                shaping: txt.shaping,
-            }
-        },
-        DrawMode::Edit => {
-            canvas::Text {
-                content: txt.content.clone(),
-                position: txt.position,
-                color: txt.color,
-                size: txt.size,
-                line_height: txt.line_height,
-                font: txt.font,
-                horizontal_alignment: txt.horizontal_alignment,
-                vertical_alignment: txt.vertical_alignment,
-                shaping: txt.shaping,
-            }
-        },
-        DrawMode::New => {
-            let mut content = txt.content.clone();
-            if blink {
-                dbg!("pushing |");
-                content.push_str("|");
-            };
-            dbg!(&content);
-            canvas::Text {
-                content,
-                position: txt.position,
-                color: txt.color,
-                size: txt.size,
-                line_height: txt.line_height,
-                font: txt.font,
-                horizontal_alignment: txt.horizontal_alignment,
-                vertical_alignment: txt.vertical_alignment,
-                shaping: txt.shaping,
-            }
-        },
-        DrawMode::Rotate => {
-            canvas::Text {
-                content: txt.content.clone(),
-                position: txt.position,
-                color: txt.color,
-                size: txt.size,
-                line_height: txt.line_height,
-                font: txt.font,
-                horizontal_alignment: txt.horizontal_alignment,
-                vertical_alignment: txt.vertical_alignment,
-                shaping: txt.shaping,
-            }
-        },
-    }
+        match draw_mode {
+            DrawMode::DrawAll => {
+                let text = canvas::Text {
+                    content: txt.content.clone(),
+                    position: txt.position,
+                    color: txt.color,
+                    size: txt.size,
+                    line_height: txt.line_height,
+                    font: txt.font,
+                    horizontal_alignment: txt.horizontal_alignment,
+                    vertical_alignment: txt.vertical_alignment,
+                    shaping: txt.shaping,
+                };
+                (text, None)
+            },
+            DrawMode::Edit => {
+                let text = canvas::Text {
+                    content: txt.content.clone(),
+                    position: txt.position,
+                    color: txt.color,
+                    size: txt.size,
+                    line_height: txt.line_height,
+                    font: txt.font,
+                    horizontal_alignment: txt.horizontal_alignment,
+                    vertical_alignment: txt.vertical_alignment,
+                    shaping: txt.shaping,
+                };
+                (text, None)
+            },
+            DrawMode::New => {
+                
+                let text = canvas::Text {
+                    content: txt.content.clone(),
+                    position: txt.position,
+                    color: txt.color,
+                    size: txt.size,
+                    line_height: txt.line_height,
+                    font: txt.font,
+                    horizontal_alignment: txt.horizontal_alignment,
+                    vertical_alignment: txt.vertical_alignment,
+                    shaping: txt.shaping,
+                };
+                
+                let path: Option<Path> = if blink {
+                    Some(Path::new(|p| {
+                        let (from, to) = 
+                            get_blink_position( 
+                                &txt.content,
+                                txt.position, 
+                                txt.blink_position,
+                            );
+                        p.move_to(from);
+                        p.line_to(to);
+                    }))
+                } else {
+                    None
+                };
+                (text, path)
+            },
+            DrawMode::Rotate => {
+                let text = canvas::Text {
+                    content: txt.content.clone(),
+                    position: txt.position,
+                    color: txt.color,
+                    size: txt.size,
+                    line_height: txt.line_height,
+                    font: txt.font,
+                    horizontal_alignment: txt.horizontal_alignment,
+                    vertical_alignment: txt.vertical_alignment,
+                    shaping: txt.shaping,
+                };
+                (text, None)
+            },
+        }
 
                   
 }
@@ -3696,4 +3838,13 @@ fn test_rotate_geometry() {
         points = rotate_geometry(&points.clone(), &mid_point, degrees, Widget::Line);
         dbg!(&points);
     }
+}
+
+#[test]
+fn test_get_blink_position() {
+    let content = "This is a test string".to_string();
+    let text_position = Point::new(0.0, 0.0);
+    let blink_position = 11;
+    let (from, to) = get_blink_position(&content, text_position, blink_position);
+    println!("{:?} {:?}", from, to);
 }

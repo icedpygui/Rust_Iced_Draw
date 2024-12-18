@@ -9,27 +9,34 @@ use iced::keyboard::key;
 use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text, text_input, vertical_space};
-use iced::{alignment, event, keyboard, time, Color, Element, Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
+use iced::{alignment, event, keyboard, time, Color, Element, 
+    Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
 use iced::widget::container::Id;
 
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, Line, PolyLine, Polygon, RightTriangle, Text, Widget};
+mod fonts;
 mod colors;
+
+use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, 
+    Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, Line, PolyLine, 
+    Polygon, RightTriangle, Text, Widget};
+
 
 
 pub fn main() -> iced::Result {
-    iced::application("Drawing Tool - Iced", Example::update, Example::view)
+    iced::application("Drawing Tool - Iced", CanvasDraw::update, CanvasDraw::view)
         .theme(|_| Theme::CatppuccinMocha)
-        .subscription(Example::subscription)
+        .subscription(CanvasDraw::subscription)
         .antialiasing(true)
+        .default_font(Font::MONOSPACE)
         .centered()
         .run()
 }
 
 #[derive(Default)]
-struct Example {
+struct CanvasDraw {
     canvas_state: draw_canvas::CanvasState,
 }
 
@@ -45,17 +52,30 @@ enum Message {
     ColorSelected(String),
     PolyInput(String),
     WidthInput(String),
+    FontWidthInput(String),
     Tick,
 }
 
-impl Example {
+impl CanvasDraw {
     fn update(&mut self, message: Message) {
         match message {
             Message::WidgetDraw(mut widget) => {
                 
                 let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
-
-                if draw_mode == DrawMode::New {
+                // Since the text widget may have a blinking cursor, the only way to use a timer
+                // is to use the main subscription one at this time, canvas lacks a time r event.
+                // Therefore, the pending has to return the curve also at each change so that
+                // the curves can be updated.  The subscrition clears the cache at each tick.
+                // A bit more efficient way would be to just have a text cache and just clear it.
+                if draw_status == DrawStatus::TextInProgress {
+                    let id = get_widget_id(&widget);
+                    let present = self.canvas_state.curves.get(&id);
+                    if present.is_none() {
+                        self.canvas_state.curves.insert(id, widget);
+                    } else {
+                        self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
+                    }
+                } else if draw_mode == DrawMode::New {
                     let id = get_widget_id(&widget);
                     let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
                     self.canvas_state.curves.insert(id, widget);
@@ -185,9 +205,15 @@ impl Example {
                 } else {
                     self.canvas_state.selected_width = 2.0; //default
                 }
-                // if self.state.edit_widget_id.is_some() {
-                //     set_edit_widget_width(self.state.edit_widget_id, self.state.selected_width);
-                // }
+            }
+            Message::FontWidthInput(input) => {
+                // little error checking
+                self.canvas_state.selected_font_width_str = input.clone();
+                if !input.is_empty() {
+                    self.canvas_state.selected_font_width = input.parse().unwrap();
+                } else {
+                    self.canvas_state.selected_font_width = 10.0; //default
+                }
             }
         }
     }
@@ -286,7 +312,7 @@ impl Example {
                 self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
                 ).into();
-
+ 
         let color_opt = 
             [
             "Primary".to_string(),
@@ -306,6 +332,12 @@ impl Example {
             text_input("Width(2.0)", 
                         &self.canvas_state.selected_width_str)
                 .on_input(Message::WidthInput)
+                .into();
+
+        let font_widths = 
+            text_input("Font Width", 
+                        &self.canvas_state.selected_font_width_str)
+                .on_input(Message::FontWidthInput)
                 .into();
 
         let poly_pts_input = 
@@ -344,10 +376,10 @@ impl Example {
             row(vec![load, save])
                 .spacing(5.0)
                 .into();
-
+            
         let instructions = 
             text("Start:\n Select a curve.\n\nDraw:\nUse left mouse button, click and move move then click again.\n\nCancel Draw:\nHold down esc and press left mouse button to cancel drawing.").into();
-         
+        
         let col = 
             column(vec![
             clear_btn,
@@ -365,6 +397,7 @@ impl Example {
             poly_pts_input,
             colors,
             widths,
+            font_widths,
             vertical_space().height(50.0).into(),
             instructions,
             ])
@@ -453,12 +486,20 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
 
     for widget in widgets.iter() {
         let points: Vec<Point> = widget.points.iter().map(|p| convert_to_point(p)).collect();
-        let mid_point = convert_to_point(&widget.mid_point);
         let other_point = convert_to_point(&widget.other_point);
         let color = convert_to_color(&widget.color);
         let width = widget.width;
         let draw_mode = DrawMode::DrawAll;
-        let radius = mid_point.distance(points[1]);
+        let mid_point = if widget.name == Widget::Text {
+            Point::default()
+        } else {
+            convert_to_point(&widget.mid_point)
+        };
+        let radius = if widget.name == Widget::Text {
+            0.0
+        } else {
+            mid_point.distance(points[1])
+        };
 
         match widget.name {
             Widget::None => {
@@ -605,6 +646,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
+                    blink_position: widget.content.len(),
                 };
                 curves.insert(id, CanvasWidget::Text(txt));
             }
