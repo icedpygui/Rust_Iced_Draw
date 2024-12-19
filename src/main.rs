@@ -19,9 +19,7 @@ mod draw_canvas;
 mod fonts;
 mod colors;
 
-use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, 
-    Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, Line, PolyLine, 
-    Polygon, RightTriangle, Text, Widget};
+use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, FreeHand, Line, PolyLine, Polygon, RightTriangle, Text, Widget};
 
 
 
@@ -141,6 +139,9 @@ impl CanvasDraw {
                     Widget::RightTriangle => {
                         self.canvas_state.selected_radio_widget = Some(Widget::RightTriangle);
                     },
+                    Widget::FreeHand => {
+                        self.canvas_state.selected_radio_widget = Some(Widget::FreeHand);
+                    }
                     Widget::Text => {
                         self.canvas_state.selected_radio_widget = Some(Widget::Text);
                     }
@@ -305,6 +306,14 @@ impl CanvasDraw {
                 Message::RadioSelected,
                 ).into();
 
+        let freehand = 
+            radio(
+                "Free Hand",
+                Widget::FreeHand,
+                self.canvas_state.selected_radio_widget,
+                Message::RadioSelected,
+                ).into();
+
         let txt = 
             radio(
                 "Text",
@@ -391,6 +400,7 @@ impl CanvasDraw {
             polygon,
             polyline,
             r_triangle,
+            freehand,
             txt,
             mode,
             load_save_row,
@@ -630,6 +640,19 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                 };
                 curves.insert(id, CanvasWidget::RightTriangle(tr));
             },
+            Widget::FreeHand => {
+                let id = Id::unique();
+                let fh = FreeHand {
+                    id: id.clone(),
+                    points,
+                    color,
+                    width,
+                    draw_mode,
+                    status: DrawStatus::Completed,
+                    completed: true,
+                };
+                curves.insert(id, CanvasWidget::FreeHand(fh));
+            }
             Widget::Text => {
                 let id = Id::unique();
                 let txt = Text {
@@ -702,6 +725,9 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
                 CanvasWidget::RightTriangle(tr) => {
                     (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, tr.color, tr.width, String::new())
                 },
+                CanvasWidget::FreeHand(fh) => {
+                    (Widget::FreeHand, &fh.points, Point::default(), Point::default(), 0, 0.0, fh.color, fh.width, String::new())
+                }
                 CanvasWidget::Text(txt) => {
                     (Widget::Text, &vec![], Point::default(), txt.position, 3, txt.degrees, txt.color, 0.0, txt.content.clone())
                 },

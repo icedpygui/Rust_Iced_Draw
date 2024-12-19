@@ -645,6 +645,20 @@ impl DrawCurve {
                             (Some(path), Some(tr.color), Some(tr.width))
                         }
                     },
+                    CanvasWidget::FreeHand(fh) => {
+                        // skip if being editied or rotated
+                        if fh.status == DrawStatus::Inprogress {
+                            (None, None, None)
+                        } else {
+                            let path = build_free_hand_path(
+                                fh, 
+                                fh.draw_mode, 
+                                None, 
+                                None, 
+                            );
+                            (Some(path), Some(fh.color), Some(fh.width))
+                        }
+                    },
                     CanvasWidget::Text(txt) => {
                         let frame_path = 
                             build_text_path (
@@ -980,6 +994,16 @@ impl Pending {
                                 );
                                 (path, tr.color, tr.width)
                             },
+                            CanvasWidget::FreeHand(fh) => {
+                                let path = 
+                                    build_free_hand_path(
+                                        fh, 
+                                        DrawMode::Edit, 
+                                        Some(cursor),
+                                        None, 
+                                    );
+                                (path, fh.color, fh.width)
+                            },
                             CanvasWidget::Text(_txt) => {
                                 (Path::new(|_| {}), Color::TRANSPARENT, 0.0)
                             }
@@ -1113,6 +1137,16 @@ impl Pending {
                                     None,
                                 );
                             (path, tr.color, tr.width, mid_point, None, Some(degrees))
+                        },
+                        CanvasWidget::FreeHand(fh) => {
+                            let path= 
+                                build_free_hand_path(
+                                    fh, 
+                                    DrawMode::Edit, 
+                                    Some(cursor),
+                                    *edit_point_index, 
+                                );
+                            (path, fh.color, fh.width, Point::default(), None, None)
                         },
                         CanvasWidget::Text(_txt) => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
@@ -1267,6 +1301,16 @@ impl Pending {
                                     *degrees,
                                 );
                             (path, tr.color, tr.width, tr.mid_point, None, Some(pending_degrees))
+                        },
+                        CanvasWidget::FreeHand(fh) => {
+                            let path = 
+                                build_free_hand_path(
+                                    fh, 
+                                    DrawMode::Rotate, 
+                                    None,
+                                    None,
+                                );
+                            (path, fh.color, fh.width, Point::default(), None, None)
                         },
                         CanvasWidget::Text(_txt) => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
@@ -1440,6 +1484,17 @@ pub struct Text {
     pub blink_position: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct FreeHand {
+    pub id: Id,
+    pub points: Vec<Point>,
+     pub color: Color,
+    pub width: f32,
+    pub draw_mode: DrawMode,
+    pub status: DrawStatus,
+    pub completed: bool,
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq,)]
 pub enum Widget {
     None,
@@ -1452,6 +1507,7 @@ pub enum Widget {
     Polygon,
     RightTriangle,
     Text,
+    FreeHand,
 }
 
 fn add_new_widget(widget: Widget, 
@@ -1584,6 +1640,19 @@ fn add_new_widget(widget: Widget,
                 }
             )
         },
+        Widget::FreeHand => {
+            CanvasWidget::FreeHand(
+                FreeHand {
+                    id: Id::unique(),
+                    points: vec![],
+                    color,
+                    width,
+                    draw_mode,
+                    status: DrawStatus::Inprogress,
+                    completed: false,
+                }
+            )
+        }
         Widget::Text => {
             CanvasWidget::Text(
                 Text {
@@ -1703,6 +1772,10 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
             
             Some(CanvasWidget::RightTriangle(tr))
         },
+        CanvasWidget::FreeHand(mut fh) => {
+            fh.points.push(cursor);
+            Some(CanvasWidget::FreeHand(fh))
+        }
         CanvasWidget::Text(mut txt) => {
             txt.degrees = 0.0;
             txt.status = DrawStatus::TextCompleted;
@@ -1966,6 +2039,13 @@ fn update_edited_widget(widget: CanvasWidget,
             tr.status = status;
             CanvasWidget::RightTriangle(tr)
         },
+        CanvasWidget::FreeHand(mut fh) => {
+            if index.is_some() {
+                fh.points[index.unwrap()] = cursor;
+            }
+            fh.status = status;
+            CanvasWidget::FreeHand(fh)
+        },
         CanvasWidget::Text(txt) => {
             CanvasWidget::Text(txt)
         }
@@ -2063,6 +2143,9 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             }
             (CanvasWidget::RightTriangle(tr.clone()), tr.degrees)
         },
+        CanvasWidget::FreeHand(fh) => {
+            (CanvasWidget::FreeHand(fh.clone()), 0.0)
+        },
         CanvasWidget::Text(txt) => {
             (CanvasWidget::Text(txt.clone()), 0.0)
         }
@@ -2092,7 +2175,6 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget
                             if txt.blink_position < txt.content.len() {
                                 txt.content.remove(txt.blink_position);
                             }
-                            // txt.blink_position -= 1;
                         },
                         iced::keyboard::key::Named::Escape => escape = true,
                         iced::keyboard::key::Named::Backspace => {
@@ -2132,8 +2214,21 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget
             } else {
                 Some(CanvasWidget::Text(txt.clone()))
             }
-            
         },
+        CanvasWidget::FreeHand(fh) => {
+            match modified.as_ref() {
+                Key::Named(named) => {
+                    match named {
+                        iced::keyboard::key::Named::Enter => {
+                            fh.completed = true;
+                        },
+                        _ => ()
+                    }
+                },
+                _ => (),
+            }
+            Some(CanvasWidget::FreeHand(fh.clone()))
+        }
         _ => None
     }
 }
@@ -2217,6 +2312,15 @@ pub fn set_widget_mode_or_status(widget: CanvasWidget,
                 tr.status = status.unwrap();
             }
             CanvasWidget::RightTriangle(tr)
+        },
+        CanvasWidget::FreeHand(mut fh) => {
+            if mode.is_some() {
+                fh.draw_mode = mode.unwrap();
+            }
+            if status.is_some() {
+                fh.status = status.unwrap();
+            }
+            CanvasWidget::FreeHand(fh)
         },
         CanvasWidget::Text(mut txt) => {
             if mode.is_some() {
@@ -2376,6 +2480,17 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
             };
             
             (CanvasWidget::RightTriangle(rt), finished)
+        },
+        CanvasWidget::FreeHand(fh) => {
+            let mut fh = fh.clone();
+            fh.points.push(cursor);
+            let finished = if fh.completed {
+                true
+            } else {
+                false
+            };
+            
+            (CanvasWidget::FreeHand(fh), finished)
         },
         CanvasWidget::Text(text) => {
             let mut txt = text.clone();
@@ -2553,6 +2668,16 @@ fn find_closest_point_index(widget: &CanvasWidget,
                 (None, false, true)
             }
         },
+        CanvasWidget::FreeHand(fh) => {
+            for (idx, point) in fh.points.iter().enumerate() {
+                let dist = cursor.distance(*point);
+                if  dist < point_dist {
+                    point_index = idx;
+                    point_dist = dist;
+                }
+            };
+            (Some(point_index), false, false)
+        },
         CanvasWidget::Text(_txt) => {
             (None, true, false)
         }
@@ -2596,6 +2721,7 @@ pub fn get_widget_id(widget: &CanvasWidget) -> Id {
         CanvasWidget::PolyLine(pl) => pl.id.clone(),
         CanvasWidget::Polygon(pg) => pg.id.clone(),
         CanvasWidget::RightTriangle(tr) => tr.id.clone(),
+        CanvasWidget::FreeHand(fh) => fh.id.clone(),
         CanvasWidget::Text(txt) => txt.id.clone(),
     }
 }
@@ -2611,6 +2737,7 @@ fn get_widget_degrees(widget: &CanvasWidget) -> Option<f32> {
         CanvasWidget::PolyLine(poly_line) => Some(poly_line.degrees),
         CanvasWidget::Polygon(polygon) => Some(polygon.degrees),
         CanvasWidget::RightTriangle(right_triangle) => Some(right_triangle.degrees),
+        CanvasWidget::FreeHand(_) => None,
         CanvasWidget::Text(txt) => Some(txt.degrees),
     }
 }
@@ -2626,6 +2753,7 @@ pub fn get_draw_mode_and_status(widget: &CanvasWidget) -> (DrawMode, DrawStatus)
         CanvasWidget::PolyLine(pl) => (pl.draw_mode, pl.status),
         CanvasWidget::Polygon(pg) => (pg.draw_mode, pg.status),
         CanvasWidget::RightTriangle(tr) => (tr.draw_mode, tr.status),
+        CanvasWidget::FreeHand(fh) => (fh.draw_mode, fh.status),
         CanvasWidget::Text(txt) => (txt.draw_mode, txt.status),
     }
 }
@@ -2658,6 +2786,9 @@ fn get_distance_to_mid_point(widget: &CanvasWidget, cursor: Point) -> f32 {
             CanvasWidget::RightTriangle(tr) => {
                 cursor.distance(tr.mid_point)
             },
+            CanvasWidget::FreeHand(fh) => {
+                cursor.distance(fh.points[0])
+            }
             CanvasWidget::Text(txt) => {
                 cursor.distance(txt.position)
             }
@@ -2702,6 +2833,9 @@ pub fn get_mid_geometry(pts: &[Point], curve_type: Widget) -> Point {
             let y = (pts[0].y + pts[1].y + pts[2].y)/3.0;
             Point {x, y}
         },
+        Widget::FreeHand => {
+            pts[0]
+        }
         Widget::Text => {
             pts[0]
         }
@@ -3680,6 +3814,62 @@ fn build_right_triangle_path(tr: &RightTriangle,
 
     (path, degrees, mid_point, tr_point)
 
+}
+
+
+fn build_free_hand_path(fh: &FreeHand, 
+                        draw_mode: DrawMode, 
+                        pending_cursor: Option<Point>,
+                        edit_point_index: Option<usize>,
+                        ) -> Path {
+
+    let mut pts = fh.points.clone();
+
+    let path = Path::new(|p| {
+        match draw_mode {
+            DrawMode::DrawAll => {
+                for (index, point) in fh.points.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+            },
+            DrawMode::Edit => {
+                if edit_point_index.is_some() {
+                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
+                }
+                
+                for (index, point) in pts.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+                for pt in pts.iter() {
+                    p.circle(*pt, 3.0);
+                }
+            },
+            DrawMode::New => {
+                for (index, point) in fh.points.iter().enumerate() {
+                    if index == 0 {
+                        p.move_to(*point);
+                    } else {
+                        p.line_to(*point);
+                    }
+                }
+                p.line_to(pending_cursor.unwrap());
+            },
+            DrawMode::Rotate => {
+                p.move_to(Point::new(0.0,0.0));
+            },
+        }
+    });
+
+    path
+    
 }
 
 fn build_text_path (txt: &Text, 
