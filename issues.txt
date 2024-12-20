@@ -1,1 +1,0 @@
-When a new widget is made and edit is turned on, no middle point until after some point id moved.
