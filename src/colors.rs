@@ -364,9 +364,9 @@ pub fn get_color_from_draw_canvas_color(color: DrawCanvasColor) -> Color {
 pub fn get_rgba_from_canvas_draw_color(color: DrawCanvasColor) -> [f32;4] {
     match color {
         DrawCanvasColor::PRIMARY => [0.118, 0.565, 1.0, 1.0],
-        DrawCanvasColor::SECONDARY => [0.412,  0.412,  0.412,  1.0],
-        DrawCanvasColor::SUCCESS => [0.196,  0.804,  0.196,  1.0],
-        DrawCanvasColor::DANGER => [1.0,  0.0, 0.0, 1.0],
+        DrawCanvasColor::SECONDARY => [0.412, 0.412, 0.412, 1.0],
+        DrawCanvasColor::SUCCESS => [0.196, 0.804, 0.196, 1.0],
+        DrawCanvasColor::DANGER => [1.0, 0.0, 0.0, 1.0],
         DrawCanvasColor::WARNING => [1.0, 0.843, 0.0, 1.0],
         DrawCanvasColor::INFO => [0.529, 0.808, 0.922, 1.0],
         DrawCanvasColor::LIGHT => [0.973, 0.973, 1.0, 1.0],

@@ -1,25 +1,30 @@
-//! This example showcases an interactive `Canvas` for drawing Bézier curves.
+//! This example showcases an interactive `Canvas` for drawing curves.
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-use colors::{get_rgba_from_canvas_draw_color, DrawCanvasColor};
-use iced::keyboard::key;
+use iced::theme::palette::Background;
 use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{button, column, container, 
-    pick_list, radio, row, text, text_input, vertical_space};
-use iced::{alignment, event, keyboard, time, Color, Element, 
-    Event, Font, Pixels, Point, Radians, Subscription, Theme, Vector};
+    pick_list, radio, row, text_input};
+use iced::{alignment, time, Color, Element, Font, Pixels, 
+    Point, Radians, Subscription, Theme, Vector};
 use iced::widget::container::Id;
 
+use iced_aw::{color_picker, iced_fonts};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
 mod fonts;
 mod colors;
+mod path_builds;
+mod helpers;
 
-use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, FreeHand, Line, PolyLine, Polygon, RightTriangle, Text, Widget};
+use draw_canvas::{get_draw_mode_and_status, get_widget_id, 
+    set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, 
+    DrawMode, DrawStatus, Ellipse, FreeHand, Line, PolyLine, Polygon, 
+    RightTriangle, Text, Widget};
 
 
 
@@ -28,7 +33,8 @@ pub fn main() -> iced::Result {
         .theme(|_| Theme::CatppuccinMocha)
         .subscription(CanvasDraw::subscription)
         .antialiasing(true)
-        .default_font(Font::MONOSPACE)
+        .font(iced_fonts::REQUIRED_FONT_BYTES)
+        // .default_font(Font::MONOSPACE)
         .centered()
         .run()
 }
@@ -36,6 +42,8 @@ pub fn main() -> iced::Result {
 #[derive(Default)]
 struct CanvasDraw {
     canvas_state: draw_canvas::CanvasState,
+    show_draw_color_picker: bool,
+    show_canvas_color_picker: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -44,46 +52,62 @@ enum Message {
     Clear,
     ModeSelected(String),
     RadioSelected(Widget),
-    Event(Event),
     Load,
     Save,
-    ColorSelected(String),
     PolyInput(String),
     WidthInput(String),
-    FontWidthInput(String),
     Tick,
+    SelectDrawColor,
+    SubmitDrawColor(Color),
+    CancelDrawColor,
+    SelectCanvasColor,
+    SubmitCanvasColor(Color),
+    CancelCanvasColor,
 }
 
 impl CanvasDraw {
     fn update(&mut self, message: Message) {
         match message {
             Message::WidgetDraw(mut widget) => {
-                
                 let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
                 // Since the text widget may have a blinking cursor, the only way to use a timer
-                // is to use the main subscription one at this time, canvas lacks a time r event.
+                // is to use the main subscription one at this time, canvas lacks a time event.
                 // Therefore, the pending has to return the curve also at each change so that
                 // the curves can be updated.  The subscrition clears the cache at each tick.
                 // A bit more efficient way would be to just have a text cache and just clear it.
-                if draw_status == DrawStatus::TextInProgress {
-                    let id = get_widget_id(&widget);
-                    let present = self.canvas_state.curves.get(&id);
-                    if present.is_none() {
+                // Probable incorporated in a near future revision.
+                match draw_status {
+                    DrawStatus::Completed => {
+                        widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
+                    },
+                    DrawStatus::Delete => {
+                        let id = get_widget_id(&widget);
+                        self.canvas_state.curves.remove(&id);
+                    },
+                    DrawStatus::TextInProgress => {
+                        // Since the text always returns a new curve or updated curve,
+                        // a check for the first return is need to see if a text is present. 
+                        let id = get_widget_id(&widget);
+                        let present = self.canvas_state.curves.get(&id);
+                        if present.is_none() {
+                            self.canvas_state.curves.insert(id, widget.clone());
+                        } else {
+                            self.canvas_state.curves.entry(id).and_modify(|k| *k= widget.clone());
+                        }
+                    },
+                    _ => (),
+                }
+                if draw_status != DrawStatus::TextInProgress {
+                    if draw_mode == DrawMode::New {
+                        let id = get_widget_id(&widget);
+                        let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
                         self.canvas_state.curves.insert(id, widget);
                     } else {
+                        // if not new must be in edit or rotate mode so modify.
+                        let id = get_widget_id(&widget);
+                        self.canvas_state.edit_widget_id = Some(id.clone());
                         self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
                     }
-                } else if draw_mode == DrawMode::New {
-                    let id = get_widget_id(&widget);
-                    let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
-                    self.canvas_state.curves.insert(id, widget);
-                } else {
-                    if draw_status == DrawStatus::Completed {
-                        widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
-                    }
-                    let id = get_widget_id(&widget);
-                    self.canvas_state.edit_widget_id = Some(id.clone());
-                    self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
                 }
 
                 self.canvas_state.request_redraw();
@@ -114,6 +138,9 @@ impl CanvasDraw {
                 self.canvas_state.request_redraw();
             },
             Message::RadioSelected(choice) => {
+                // Have to  make sure and only use the timer event during
+                // the text only.
+                self.canvas_state.timer_event_enabled = false;
                 match choice {
                     Widget::Arc => {
                         self.canvas_state.selected_radio_widget = Some(Widget::Arc);
@@ -144,50 +171,27 @@ impl CanvasDraw {
                     }
                     Widget::Text => {
                         self.canvas_state.selected_radio_widget = Some(Widget::Text);
+                        self.canvas_state.timer_event_enabled = true;
                     }
                     Widget::None => (),
                 } 
             },
-            Message::Event(Event::Keyboard(keyboard::Event::KeyPressed {
-                key: keyboard::Key::Named(key::Named::Escape),
-                ..
-            })) => { 
-                self.canvas_state.escape_pressed = true;
-            },
-            Message::Event(Event::Keyboard(keyboard::Event::KeyReleased {
-                key: keyboard::Key::Named(key::Named::Escape),
-                ..
-            })) => { 
-                self.canvas_state.escape_pressed = false;
-            },
-            Message::Event(_) => (),
             Message::Tick => {
                 self.canvas_state.elapsed_time += self.canvas_state.timer_duration;
                 self.canvas_state.blink = !self.canvas_state.blink;
                 self.canvas_state.request_redraw();
-            }
+            },
             Message::Load => {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let widgets = serde_json::from_str(&data).expect("Unable to parse");
                 self.canvas_state.curves = import_widgets(widgets);
                 self.canvas_state.request_redraw();
-            }
+            },
             Message::Save => {
                 let path = Path::new("./resources/data.json");
                 let widgets = convert_to_export(&self.canvas_state.curves);
                 let _ = save(path, &widgets);
-            }
-            Message::ColorSelected(color_str) => {
-                let canvas_color: DrawCanvasColor = match color_str.as_str() {
-                    "Primary" => DrawCanvasColor::PRIMARY,
-                    "Secondary" => DrawCanvasColor::SECONDARY,
-                    "Success" => DrawCanvasColor::SUCCESS,
-                    "Danger" => DrawCanvasColor::DANGER,
-                    _ => DrawCanvasColor::WHITE,
-                };
-                self.canvas_state.selected_color_str = Some(color_str);
-                self.canvas_state.selected_color = Color::from(get_rgba_from_canvas_draw_color(canvas_color));
             },
             Message::PolyInput(input) => {
                 // little error checking
@@ -197,7 +201,7 @@ impl CanvasDraw {
                 } else {
                     self.canvas_state.selected_poly_points = 4; //default
                 }
-            }
+            },
             Message::WidthInput(input) => {
                 // little error checking
                 self.canvas_state.selected_width_str = input.clone();
@@ -206,16 +210,28 @@ impl CanvasDraw {
                 } else {
                     self.canvas_state.selected_width = 2.0; //default
                 }
-            }
-            Message::FontWidthInput(input) => {
-                // little error checking
-                self.canvas_state.selected_font_width_str = input.clone();
-                if !input.is_empty() {
-                    self.canvas_state.selected_font_width = input.parse().unwrap();
-                } else {
-                    self.canvas_state.selected_font_width = 10.0; //default
-                }
-            }
+            },
+            Message::SelectDrawColor => {
+                self.show_draw_color_picker = true;
+            },
+            Message::SubmitDrawColor(color) => {
+                self.canvas_state.selected_draw_color = color;
+                self.show_draw_color_picker = false;
+            },
+            Message::CancelDrawColor => {
+                self.show_draw_color_picker = false;
+            },
+            Message::SelectCanvasColor => {
+                self.show_canvas_color_picker = true;
+            },
+            Message::SubmitCanvasColor(color) => {
+                self.canvas_state.selected_canvas_color = color;
+                self.show_canvas_color_picker = false;
+                self.canvas_state.request_redraw();
+            },
+            Message::CancelCanvasColor => {
+                self.show_canvas_color_picker = false;
+            },
         }
     }
 
@@ -228,9 +244,7 @@ impl CanvasDraw {
                     self.canvas_state.timer_duration))
                     .map(|_| Message::Tick));
         }
-        
-        subscriptions.push(event::listen().map(Message::Event)) ;
-        
+    
         Subscription::batch(subscriptions)
         
     }
@@ -308,7 +322,7 @@ impl CanvasDraw {
 
         let freehand = 
             radio(
-                "Free Hand",
+                "FreeHand",
                 Widget::FreeHand,
                 self.canvas_state.selected_radio_widget,
                 Message::RadioSelected,
@@ -322,31 +336,10 @@ impl CanvasDraw {
                 Message::RadioSelected,
                 ).into();
  
-        let color_opt = 
-            [
-            "Primary".to_string(),
-            "Secondary".to_string(),
-            "Success".to_string(),
-            "Danger".to_string(),
-            "White".to_string(),
-            ];
-
-        let colors = 
-            pick_list(
-                color_opt, 
-                self.canvas_state.selected_color_str.clone(), 
-                Message::ColorSelected).into();
-
         let widths = 
             text_input("Width(2.0)", 
                         &self.canvas_state.selected_width_str)
                 .on_input(Message::WidthInput)
-                .into();
-
-        let font_widths = 
-            text_input("Font Width", 
-                        &self.canvas_state.selected_font_width_str)
-                .on_input(Message::FontWidthInput)
                 .into();
 
         let poly_pts_input = 
@@ -380,15 +373,44 @@ impl CanvasDraw {
                 .padding(5.0)
                 .on_press(Message::Load)
                 .into();
+
+        let select_draw_color = 
+            button("Draw Color")
+                .padding(5.0)
+                .on_press(Message::SelectDrawColor)
+                .style(move|theme: &Theme, status| {   
+                    get_button_styling(theme, status, self.canvas_state.selected_draw_color)  
+                    });
+
+        let select_canvas_color = 
+            button("Canvas Color")
+                .padding(5.0)
+                .on_press(Message::SelectCanvasColor)
+                .style(move|theme: &Theme, status| {   
+                    get_button_styling(theme, status, self.canvas_state.selected_canvas_color)  
+                    });
         
+        let draw_color = color_picker(
+            self.show_draw_color_picker,
+            self.canvas_state.selected_draw_color,
+            select_draw_color,
+            Message::CancelDrawColor,
+            Message::SubmitDrawColor,
+        ).into();
+
+        let canvas_color = color_picker(
+            self.show_canvas_color_picker,
+            self.canvas_state.selected_canvas_color,
+            select_canvas_color,
+            Message::CancelCanvasColor,
+            Message::SubmitCanvasColor,
+        ).into();
+
         let load_save_row = 
             row(vec![load, save])
                 .spacing(5.0)
                 .into();
             
-        let instructions = 
-            text("Start:\n Select a curve.\n\nDraw:\nUse left mouse button, click and move move then click again.\n\nCancel Draw:\nHold down esc and press left mouse button to cancel drawing.").into();
-        
         let col = 
             column(vec![
             clear_btn,
@@ -405,27 +427,59 @@ impl CanvasDraw {
             mode,
             load_save_row,
             poly_pts_input,
-            colors,
             widths,
-            font_widths,
-            vertical_space().height(50.0).into(),
-            instructions,
+            draw_color,
+            canvas_color,
             ])
-            .width(150.0)
+            .width(175.0)
             .spacing(10.0)
             .padding(10.0)
             .into();
 
+
         let draw =  
             container(self.canvas_state
-                .view(&self.canvas_state.curves)
-                .map(Message::WidgetDraw))
-                .into();
-        
+            .view(&self.canvas_state.curves)
+            .map(Message::WidgetDraw))
+            .into();
+         
         Element::from(row(vec![col, draw]))
 
     }
 
+}
+
+fn get_button_styling(theme: &Theme,
+                        status: button::Status, 
+                        bg_color: Color,
+                        ) -> button::Style {
+
+    let mut base_style = button::primary(theme, status);
+    let mut hover_style = button::primary(theme, status);
+
+    let background = Background::new(bg_color, Color::WHITE);
+
+    base_style.background = Some(iced::Background::Color(bg_color));
+    base_style.text_color = background.base.text;
+
+    hover_style.background = Some(iced::Background::Color(background.strong.color));
+    hover_style.text_color = background.weak.text;
+
+    match status {
+        button::Status::Active | button::Status::Pressed => base_style,
+        button::Status::Hovered => hover_style,
+        button::Status::Disabled => disabled(base_style),
+    }
+}
+
+fn disabled(style: button::Style) -> button::Style {
+    button::Style {
+        background: style
+            .background
+            .map(|background| background.scale_alpha(0.5)),
+        text_color: style.text_color.scale_alpha(0.5),
+        ..style
+    }
 }
 
 pub fn save(path: impl AsRef<Path>, data: &impl Serialize) -> std::io::Result<()> {
@@ -485,6 +539,7 @@ pub struct ExportWidget {
     pub mid_point: ExportPoint,
     pub other_point: ExportPoint,
     pub rotation: f32,
+    pub radius: f32,
     pub color: ExportColor,
     pub width: f32,
 }
@@ -505,12 +560,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
         } else {
             convert_to_point(&widget.mid_point)
         };
-        let radius = if widget.name == Widget::Text {
-            0.0
-        } else {
-            mid_point.distance(points[1])
-        };
-
+        
         match widget.name {
             Widget::None => {
             },
@@ -520,7 +570,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     id: id.clone(),
                     points,
                     mid_point,
-                    radius,
+                    radius: widget.radius,
                     color,
                     width,
                     start_angle: Radians(other_point.x),
@@ -552,7 +602,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     id: id.clone(),
                     center: mid_point,
                     circle_point: convert_to_point(&widget.points[0]),
-                    radius: widget.mid_point.distance(widget.points[0]),
+                    radius: widget.radius,
                     color,
                     width,
                     draw_mode,
@@ -692,44 +742,45 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
             other_point, 
             poly_points, 
             rotation,
+            radius,
             color, 
             width,
             content ,
             ) = 
             match widget {
                 CanvasWidget::None => {
-                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, Color::TRANSPARENT, 0.0, String::new())
+                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, 0.0, Color::TRANSPARENT, 0.0, String::new())
                 },
                 CanvasWidget::Arc(arc) => {
                     let other_point = Point{ x: arc.start_angle.0, y: arc.end_angle.0 };
-                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.color, arc.width, String::new())
+                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.radius, arc.color, arc.width, String::new())
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, bz.color, bz.width, String::new())
+                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, 0.0, bz.color, bz.width, String::new())
                 },
                 CanvasWidget::Circle(cir) => {
-                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.color, cir.width, String::new())
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.radius, cir.color, cir.width, String::new())
                 },
                 CanvasWidget::Ellipse(ell) => {
-                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, ell.color, ell.width, String::new())
+                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, 0.0, ell.color, ell.width, String::new())
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, ln.color, ln.width, String::new())
+                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, 0.0, ln.color, ln.width, String::new())
                 },
                 CanvasWidget::Polygon(pg) => {
-                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, pg.color, pg.width, String::new())
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, 0.0, pg.color, pg.width, String::new())
                 },
                 CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, pl.color, pl.width, String::new())
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, 0.0, pl.color, pl.width, String::new())
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, tr.color, tr.width, String::new())
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, 0.0, tr.color, tr.width, String::new())
                 },
                 CanvasWidget::FreeHand(fh) => {
-                    (Widget::FreeHand, &fh.points, Point::default(), Point::default(), 0, 0.0, fh.color, fh.width, String::new())
+                    (Widget::FreeHand, &fh.points, Point::default(), Point::default(), 0, 0.0, 0.0, fh.color, fh.width, String::new())
                 }
                 CanvasWidget::Text(txt) => {
-                    (Widget::Text, &vec![], Point::default(), txt.position, 3, txt.degrees, txt.color, 0.0, txt.content.clone())
+                    (Widget::Text, &vec![], Point::default(), txt.position, 3, txt.degrees, 0.0, txt.color, 0.0, txt.content.clone())
                 },
         };
 
@@ -749,7 +800,8 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
                 poly_points, 
                 mid_point: x_mid_pt,
                 other_point: x_other_point,
-                rotation, 
+                rotation,
+                radius, 
                 color: x_color, 
                 width,  
             })

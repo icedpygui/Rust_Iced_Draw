@@ -1,5 +1,6 @@
 
 
 mod draw_canvas;
-mod colors;
 mod fonts;
+mod path_builds;
+mod helpers;

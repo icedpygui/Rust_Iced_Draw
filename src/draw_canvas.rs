@@ -1,8 +1,8 @@
+//! draw_canvas
 
 use std::collections::HashMap;
-use std::f32::consts::PI;
+
 use iced::keyboard::Key;
-use iced::widget::canvas::path::arc::Elliptical;
 use iced::widget::container::Id;
 use iced::widget::text::{LineHeight, Shaping};
 use iced::{alignment, mouse, Color, Font, Pixels, Radians, Vector};
@@ -11,7 +11,12 @@ use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
 use serde::{Deserialize, Serialize};
 
-use crate::fonts::FONT_SIZE;
+use crate::helpers::{build_polygon, get_angle_of_vectors, get_horizontal_angle_of_vector, get_line_from_slope_intercept, get_linear_regression, get_mid_point, rotate_geometry, to_degrees, to_radians, translate_geometry};
+use crate::path_builds::{build_arc_path, build_bezier_path, build_circle_path, 
+    build_ellipse_path, build_free_hand_path, build_line_path, 
+    build_polygon_path, build_polyline_path, build_right_triangle_path, build_text_path};
+
+
 
 #[derive(Debug, Clone, Default)]
 pub enum CanvasWidget {
@@ -42,6 +47,7 @@ pub enum DrawMode {
 pub enum DrawStatus {
     Inprogress,
     Completed,
+    Delete,
     TextInProgress,
     TextCompleted,
 }
@@ -76,15 +82,13 @@ pub struct CanvasState {
     pub edit_widget_id: Option<Id>,
     pub escape_pressed: bool,
     pub selected_radio_widget: Option<Widget>,
-    pub selected_color: Color,
-    pub selected_color_str: Option<String>,
+    pub selected_draw_color: Color,
+    pub selected_canvas_color: Color,
     pub selected_poly_points: usize,
     pub selected_poly_points_str: String,
     pub selected_step_degrees: f32,
     pub selected_width: f32,
     pub selected_width_str: String,
-    pub selected_font_width_str: String,
-    pub selected_font_width: f32,
     pub timer_event_enabled: bool,
     pub timer_duration: u64,
     pub elapsed_time: u64,
@@ -94,27 +98,25 @@ pub struct CanvasState {
 impl Default for CanvasState {
     fn default() -> Self {
         Self { 
-                cache: canvas::Cache::default(),
-                curves: HashMap::new(),
-                draw_mode: DrawMode::DrawAll,
-                edit_widget_id: None,
-                escape_pressed: false,
-                selected_radio_widget: None,
-                selected_color: Color::WHITE,
-                selected_color_str: Some("White".to_string()),
-                selected_poly_points: 3,
-                selected_poly_points_str: String::new(),
-                selected_step_degrees: 6.0,
-                selected_width: 2.0,
-                selected_width_str: String::new(),
-                selected_font_width_str: String::new(),
-                selected_font_width: 10.0,
-                timer_event_enabled: true,
-                timer_duration: 750,
-                elapsed_time: 0,
-                blink: false,
-             }
+            cache: canvas::Cache::default(),
+            curves: HashMap::new(),
+            draw_mode: DrawMode::DrawAll,
+            edit_widget_id: None,
+            escape_pressed: false,
+            selected_radio_widget: None,
+            selected_draw_color: Color::from_rgb(0.961, 0.871, 0.702),
+            selected_canvas_color: Color::from_rgb(0.0, 0.502, 0.502),
+            selected_poly_points: 3,
+            selected_poly_points_str: String::new(),
+            selected_step_degrees: 6.0,
+            selected_width: 2.0,
+            selected_width_str: String::new(),
+            timer_event_enabled: false,
+            timer_duration: 750,
+            elapsed_time: 0,
+            blink: false,
         }
+    }
 }
 
 impl CanvasState {
@@ -207,17 +209,22 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                         // Find for closest point to edit in selected widget
                                         // which might be either a mid point(translate) or 
                                         // curve point (move point).
-                                        let widget = widget.clone();
                                         let (point_index, mid_point, other_point) = 
                                             find_closest_point_index(&widget, cursor_position);
-                                        
+                                        let widget = widget.clone();
                                         *program_state = Some(Pending::EditThird {
-                                            widget,
+                                            widget: widget.clone(),
                                             edit_point_index: point_index,
                                             edit_mid_point: mid_point,
                                             edit_other_point: other_point,
                                         });
-                                        None
+                                        // If a text widget, need to send back the curve so that the
+                                        // cursor can be seen.  No access to the time event during pending.
+                                        if self.state.selected_radio_widget == Some(Widget::Text) {
+                                            Some(widget.clone())
+                                        } else {
+                                            None
+                                        }
                                     },
                                     // The third click will send back the DrawCurve
                                     // with the finally updated curve
@@ -258,7 +265,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                             add_new_widget(
                                                 self.state.selected_radio_widget.unwrap(), 
                                                 self.state.selected_poly_points,
-                                                self.state.selected_color,
+                                                self.state.selected_draw_color,
                                                 self.state.selected_width,
                                                 self.state.draw_mode,
                                             );
@@ -271,7 +278,14 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                         *program_state = Some(Pending::New {
                                             widget: widget.clone(),
                                         });
-                                        Some(widget)
+
+                                        // If a text widget, need to send back the curve so that the
+                                        // cursor can be seen.  No access to the time event during pending.
+                                        if self.state.selected_radio_widget == Some(Widget::Text) {
+                                            Some(widget)
+                                        } else {
+                                            None
+                                        }
                                     },
                                     // The second click is a Some() since it was created above
                                     // The pending is carrying the previous info
@@ -292,11 +306,12 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                                 widget: widget.clone(),
                                             });
                                             
-                                            let some_text = if self.state.selected_radio_widget.unwrap() == Widget::Text {
-                                                Some(widget)
-                                            } else {
-                                                None
-                                            };
+                                            let some_text = 
+                                                if self.state.selected_radio_widget.unwrap() == Widget::Text {
+                                                    Some(widget)
+                                                } else {
+                                                    None
+                                                };
                                             some_text
                                         }
                                     },
@@ -415,28 +430,52 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                         location:_, 
                         modifiers:_, 
                         text:_ } => {
-                            if self.state.selected_radio_widget == Some(Widget::Text) {
-                                match program_state {
-                                    None => None,
-                                    Some(
-                                        Pending::New { widget }) => {
-                                            match add_keypress(widget, modified_key) {
-                                                Some(widget) => {
+                            match program_state {
+                                None => None,
+                                Some(Pending::New { 
+                                    widget }) => {
+                                        let (widget, completed) = 
+                                            add_keypress(widget, modified_key);
+                                        match widget {
+                                            Some(widget) => {
+                                                // if not completed, keep doing the pending
+                                                // and since text only for now, 
+                                                // return the curve too.
+                                                // if completed for freehand, quit pending 
+                                                // and return the curve.
+                                                if !completed {
                                                     *program_state = Some(Pending::New { 
                                                         widget: widget.clone(), 
                                                     });
                                                     Some(widget)
-                                                },
-                                                None => {
+                                                } else {
                                                     *program_state = None;
-                                                    None
+                                                    Some(widget)
                                                 }
+                                            },
+                                            None => {
+                                                *program_state = None;
+                                                None
                                             }
-                                        },
-                                        _ => None,
-                                }
-                            } else {
-                                None
+                                        }
+                                    },
+                                    Some(Pending::EditSecond { 
+                                        widget }) => {
+                                            let del_key = get_del_key(modified_key);
+                                            let del_widget = if del_key {
+                                                set_widget_mode_or_status(
+                                                    widget.clone(), 
+                                                    None, 
+                                                    Some(DrawStatus::Delete),
+                                                )
+                                            } else {
+                                                widget.clone()
+                                            };
+                                                
+                                            *program_state = None;
+                                            Some(del_widget)
+                                    },
+                                    _ => None,
                             }
                         },
                     iced::keyboard::Event::KeyReleased {key: _, location:_, modifiers:_ } => None,
@@ -460,6 +499,10 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
         let content =
             self.state.cache.draw(renderer, bounds.size(), 
                             |frame| {
+
+                let background = Path::rectangle(Point::ORIGIN, frame.size());
+                frame.fill(&background, self.state.selected_canvas_color);
+
                 DrawCurve::draw_all(self.curves, self.state.blink, frame, theme);
 
                 frame.stroke(
@@ -580,14 +623,15 @@ impl DrawCurve {
                         if line.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
-                            let (path, _, _) = build_line_path(
-                                line, 
-                                line.draw_mode, 
-                                None, 
-                                None, 
-                                false,
-                                None,
-                                );
+                            let (path, _, _) = 
+                                build_line_path(
+                                    line, 
+                                    line.draw_mode, 
+                                    None, 
+                                    None, 
+                                    false,
+                                    None,
+                                    );
 
                             (Some(path), Some(line.color), Some(line.width))
                         }
@@ -597,15 +641,16 @@ impl DrawCurve {
                         if pl.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
-                            let (path, _, _) = build_polyline_path(
-                                pl, 
-                                pl.draw_mode, 
-                                None, 
-                                None, 
-                                false,
-                                false,
-                                None,
-                            );
+                            let (path, _, _) = 
+                                build_polyline_path(
+                                    pl, 
+                                    pl.draw_mode, 
+                                    None, 
+                                    None, 
+                                    false,
+                                    false,
+                                    None,
+                                );
                             (Some(path), Some(pl.color), Some(pl.width))
                         }
                     },
@@ -615,14 +660,14 @@ impl DrawCurve {
                             (None, None, None)
                         } else {
                             let (path, _, _) = 
-                            build_polygon_path(
-                                pg, 
-                                pg.draw_mode, 
-                                None,  
-                                false,
-                                false,
-                                None,
-                            );
+                                build_polygon_path(
+                                    pg, 
+                                    pg.draw_mode, 
+                                    None,  
+                                    false,
+                                    false,
+                                    None,
+                                );
                                 
                             (Some(path), Some(pg.color), Some(pg.width))
                         }
@@ -632,15 +677,16 @@ impl DrawCurve {
                         if tr.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
-                            let (path, _, _, _) = build_right_triangle_path(
-                                tr, 
-                                tr.draw_mode, 
-                                None, 
-                                None, 
-                                false,
-                                false,
-                                None,
-                            );
+                            let (path, _, _, _) = 
+                                build_right_triangle_path(
+                                    tr, 
+                                    tr.draw_mode, 
+                                    None, 
+                                    None, 
+                                    false,
+                                    false,
+                                    None,
+                                );
                                 
                             (Some(path), Some(tr.color), Some(tr.width))
                         }
@@ -650,12 +696,13 @@ impl DrawCurve {
                         if fh.status == DrawStatus::Inprogress {
                             (None, None, None)
                         } else {
-                            let path = build_free_hand_path(
-                                fh, 
-                                fh.draw_mode, 
-                                None, 
-                                None, 
-                            );
+                            let path = 
+                                build_free_hand_path(
+                                    fh, 
+                                    fh.draw_mode, 
+                                    None, 
+                                    None, 
+                                );
                             (Some(path), Some(fh.color), Some(fh.width))
                         }
                     },
@@ -674,7 +721,7 @@ impl DrawCurve {
                     }
                     CanvasWidget::None => (None, None, None),
                 };
-                
+
                 if let Some(path) = path { frame.stroke(
                     &path,
                     Stroke::default()
@@ -837,19 +884,22 @@ impl Pending {
                                 );
                             (path, r_tr.color, r_tr.width, Some(mid_point), Some(degrees), None)
                         },
-                        CanvasWidget::Text(txt) => {
-                            let frame_path = build_text_path(
-                                    txt, 
+                        CanvasWidget::FreeHand(fh) => {
+                            let path = 
+                                build_free_hand_path(
+                                    fh, 
                                     DrawMode::New, 
                                     Some(cursor), 
-                                    0.0,
-                                    false,
+                                    None,
                                 );
-                            frame.fill_text(frame_path.0);
-                                
+                            (path, fh.color, fh.width, None, None, None)
+                        }
+                        CanvasWidget::Text(_txt) => {
+                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)  
+                        }
+                        CanvasWidget::None => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
                         }
-                        _ => (Path::new(|_| {}), Color::TRANSPARENT, 0.0, None, None, None)
                     };
 
                     if degrees_center.is_some() {
@@ -1892,7 +1942,6 @@ fn update_edited_widget(widget: CanvasWidget,
                 let vx = p1.distance(ell.center);
                 let vy = ell.points[2].distance(ell.center);
                 ell.points[1] = p1;
-                dbg!(&p1);
                 ell.radii = Vector{ x: vx, y: vy };
             } else if index == Some(2) {
                 let p2 = Point::new(ell.center.x, cursor.y);
@@ -2152,7 +2201,7 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
     }
 }
 
-fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget> {
+fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidget>, bool) {
     let mut escape = false;
     match widget {
         CanvasWidget::Text(txt) => {
@@ -2210,9 +2259,9 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget
                 Key::Unidentified => (),
             }
             if escape {
-                None
+                (None, false)
             } else {
-                Some(CanvasWidget::Text(txt.clone()))
+                (Some(CanvasWidget::Text(txt.clone())), false)
             }
         },
         CanvasWidget::FreeHand(fh) => {
@@ -2227,9 +2276,23 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> Option<CanvasWidget
                 },
                 _ => (),
             }
-            Some(CanvasWidget::FreeHand(fh.clone()))
+            
+           (Some(CanvasWidget::FreeHand(fh.clone())), fh.completed)
+            
         }
-        _ => None
+        _ => (None, false)
+    }
+}
+
+fn get_del_key(modified: Key) -> bool {
+    match modified.as_ref() {
+        Key::Named(named) => {
+            match named {
+                iced::keyboard::key::Named::Delete => true,
+                _ => false,
+            }
+        },
+        _ => false,
     }
 }
 
@@ -2678,37 +2741,15 @@ fn find_closest_point_index(widget: &CanvasWidget,
             };
             (Some(point_index), false, false)
         },
-        CanvasWidget::Text(_txt) => {
-            (None, true, false)
+        CanvasWidget::Text(txt) => {
+            // just putting cursor at the end for now
+            // todo find closest point between letters
+            (Some(txt.content.len()), false, false)
         }
     }
     
 }
 
-fn get_mid_point(pt1: Point, pt2: Point) -> Point {
-    Point {x: (pt1.x + pt2.x) / 2.0, y: (pt1.y + pt2.y) / 2.0 }
-}
-
-fn get_linear_regression(points: &[Point]) -> (f32, f32) {
-    let mut sx: f64 = 0.0;
-    let mut sy: f64 = 0.0;
-    let mut sxx: f64 = 0.0;
-    let mut sxy: f64 = 0.0;
-
-    for point in points.iter() {
-        sx += point.x as f64;
-        sy += point.y as f64;
-        sxx += point.x as f64 * point.x as f64;
-        sxy += point.x as f64 * point.y as f64;
-    }
-
-    let n = points.len() as f64;
-    let beta = (n*sxy-sx*sy) / (n*sxx - sx*sx);
-    let alpha = (1.0/n * sy) - (beta*1.0/n*sx);
-
-    (beta as f32, alpha as f32)
-
-}
 
 pub fn get_widget_id(widget: &CanvasWidget) -> Id {
     match widget {
@@ -2844,1197 +2885,3 @@ pub fn get_mid_geometry(pts: &[Point], curve_type: Widget) -> Point {
     
 }
 
-fn get_line_from_slope_intercept(points: &[Point], 
-                                slope: f32, 
-                                intercept: f32,
-                                ) -> (Point, Point) {
-
-    let mut small_x = 1_000_000_f32;
-    let mut large_x = 0.0;
-    let mut small_y = 1_000_000_f32;
-    let mut large_y = 0.0;
-
-    for point in points.iter() {
-        if point.x < small_x {
-            small_x = point.x;
-        }
-        if point.x > large_x {
-            large_x = point.x;
-        }
-        if point.y < small_y {
-            small_y = point.y;
-        }
-        if point.y > large_y {
-            large_y = point.y;
-        }
-    }
- 
-    let ys = slope*small_x + intercept;
-    let yl = slope*large_x + intercept; 
-    
-    (Point{x: small_x, y: ys}, Point{x: large_x, y: yl})  
-
-}
-
-fn translate_geometry(pts: &Vec<Point>, 
-                        new_center: Point,
-                        old_center: Point, 
-                        ) 
-                        -> Vec<Point> {
-    let mut new_pts = vec![];
-    let dist_x = new_center.x - old_center.x;
-    let dist_y = new_center.y - old_center.y;
-    for pt in pts.iter() {
-        new_pts.push(Point{x: pt.x + dist_x, y: pt.y + dist_y})
-    }
-
-    new_pts
-}
-
-// The degrees are adjusted based on how degrees where calulated for each widget.
-fn rotate_geometry(
-                    points: &[Point], 
-                    mid_point: &Point, 
-                    step_degrees: &f32, 
-                    widget: Widget,
-                    ) -> Vec<Point> {
-    match widget {
-        Widget::None => vec![],
-        _ => {
-            let theta = to_radians(step_degrees);
-            let mut new_points = vec![];
-            for point in points.iter() {
-                let x_new = (point.x - mid_point.x) * theta.cos() - 
-                                (point.y - mid_point.y) * theta.sin() + 
-                                mid_point.x;
-                let y_new = (point.x - mid_point.x) * theta.sin() + 
-                                (point.y - mid_point.y) * theta.cos() + 
-                                mid_point.y;
-
-                new_points.push(Point { x: x_new, y: y_new })
-            }
-            
-            new_points
-        }
-    }
-}
-
-// The first point is used to create a horizontal vector
-pub fn get_horizontal_angle_of_vector(center: Point, p2: Point) -> f32 {
-    let p1 = Point::new(center.x-10.0, center.y);
-    let pts = 
-        translate_geometry(
-            &vec![p1, p2], 
-            Point::default(), 
-            center,
-        );
-
-    let angle = ((pts[0].y).atan2(pts[0].x) -
-                        (pts[1].y).atan2(pts[1].x)) * -1.0;
-
-    // Since beyond pi, angle goes negative
-    let new_angle = if angle < 0.0 {
-        2.0 * PI + angle
-    } else {
-        angle
-    };
-
-    to_degrees(&new_angle)
-}
-
-pub fn get_angle_of_vectors(center: Point, p1: Point, p2: Point) -> Radians {
-
-    let pts = 
-        translate_geometry(
-            &vec![p1, p2], 
-            Point::default(), 
-            center,
-        );
-
-    let angle = ((pts[0].y).atan2(pts[0].x) -
-                        (pts[1].y).atan2(pts[1].x)) * -1.0;
-    
-    // Since beyond pi, angle goes negative
-    let new_angle = if angle < 0.0 {
-        2.0 * PI + angle
-    } else {
-        angle
-    };
-
-    Radians::from(new_angle)
-}
-
-fn to_degrees(radians_f32: &f32) -> f32 {
-    radians_f32 * 180.0/PI
-}
-
-fn to_radians(degrees: &f32) -> f32 {
-    degrees * PI/180.0
-}
-
-fn get_blink_position(content: &String,
-                        text_position: Point, 
-                        blink_position: usize, 
-                        ) -> (Point, Point) {
-
-    let content = content[0..blink_position].to_string();
-    let mut size = 0.0;
-    for c in content.chars() {
-        if c != '\r' {
-            let value = FONT_SIZE.get(&c);
-            size += value.unwrap();
-        }
-    }
-    
-    let from_x = text_position.x + size;
-    let from_y = text_position.y;
-    let from = Point::new(from_x, from_y);
-    let to_y = from.y + 16.0 * 1.2;
-    let to = Point::new(from.x, to_y);
-    (from, to)
-}
-
-// fn on_event(/*...*/) -> event::Status {
-//         // ..
-//         let canvas_event = match event {
-//             core::Event::Mouse(mouse_event) => Some(Event::Mouse(mouse_event)),
-//             core::Event::Touch(touch_event) => Some(Event::Touch(touch_event)),
-//             core::Event::Keyboard(keyboard_event) => {
-//                 Some(Event::Keyboard(keyboard_event))
-//             }
-//             core::Event::Window(_) => None, // <-- no way to check for redraw requests
-//         };
-//     }
-
-fn build_polygon(mid_point: Point, pg_point: Point, poly_points: usize, mut degrees: f32) -> Vec<Point> {
-    
-    let angle = 2.0 * PI / poly_points as f32;
-    let radius = mid_point.distance(pg_point);
-    let mut points = vec![];
-    for i in 0..poly_points {
-        let x = mid_point.x + radius * (i as f32 * angle).sin();
-        let y = mid_point.y + radius * (i as f32 * angle).cos();
-        points.push(Point::new(x, y));
-    }
-    
-    degrees += 180.0;
-    let mut pts = rotate_geometry(&points, &mid_point, &degrees, Widget::Polygon);
-    pts.push(pts[0]);
-    pts
-
-}
-
-fn build_arc_path(arc: &Arc, 
-                    draw_mode: DrawMode, 
-                    pending_cursor: Option<Point>,
-                    edit_point_index: Option<usize>, 
-                    edit_mid_point: bool,
-                    ) -> (Path, Point, Radians, Radians, Option<f32>, Option<f32>) {
-
-    let mut pts = arc.points.clone();
-    let mut mid_point = arc.mid_point;
-    let mut start_angle = arc.start_angle;
-    let mut end_angle = arc.end_angle;
-    let mut radius = arc.radius;
-    let mut degrees_left = None;
-    let mut degrees_center = None;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                let new_arc = 
-                    canvas::path::Arc{ 
-                        center: arc.mid_point, 
-                        radius: arc.radius, 
-                        start_angle: arc.start_angle, 
-                        end_angle: arc.end_angle, 
-                    };
-                p.arc(new_arc);
-            },
-            DrawMode::Edit => {
-                pts = arc.points.clone();
-                let cursor = pending_cursor.unwrap();
-
-                if edit_mid_point {
-                    pts = translate_geometry(
-                        &pts, 
-                        cursor,
-                        mid_point, 
-                        );
-                    mid_point = cursor;
-                } 
-                if edit_point_index.is_some() && edit_point_index != Some(0) {
-                    pts[edit_point_index.unwrap()] = cursor;
-                    if edit_point_index == Some(1) {
-                        radius = mid_point.distance(cursor);
-
-                        start_angle = get_angle_of_vectors(
-                            mid_point, 
-                            Point::new(-mid_point.x, mid_point.y), 
-                            cursor) + Radians::PI;
-                    
-                        end_angle = 
-                            get_angle_of_vectors(
-                                mid_point, 
-                                cursor, 
-                                pts[2]) + start_angle;
-                        degrees_left = 
-                            Some(get_horizontal_angle_of_vector(
-                                mid_point, 
-                                cursor, 
-                            ));
-                    } else if edit_point_index == Some(2) {
-                        end_angle = 
-                            get_angle_of_vectors(
-                                mid_point, 
-                                pts[1], 
-                                cursor) + start_angle;
-                        degrees_center = Some(to_degrees(&(end_angle.0-start_angle.0)));
-                    }
-
-                    // calc the end_angle point        
-                    let r = radius;
-                    let b = end_angle.0;
-                    let point_b = Point::new(r*b.cos(), r*b.sin());
-                    pts[2] = translate_geometry(&vec![point_b], mid_point, Point::default())[0];
-                    
-                }
-                p.move_to(pts[0]);
-                p.line_to(pts[1]);
-                
-                p.circle(mid_point, 3.0);
-                p.circle(pts[1], 3.0);
-                p.circle(pts[2], 3.0);
-                
-                let edit_arc = canvas::path::Arc{ 
-                                            center: mid_point, 
-                                            radius, 
-                                            start_angle, 
-                                            end_angle, 
-                                        };
-                p.arc(edit_arc);
-            },
-            DrawMode::New => {
-                let cursor = pending_cursor.unwrap();
-                let pts_len = arc.points.len();
-                
-                if pts_len == 1 {
-                    p.move_to(arc.points[0]);
-                    p.line_to(cursor);
-                    start_angle = get_angle_of_vectors(
-                            arc.points[0], 
-                            Point::new(-arc.points[0].x, arc.points[0].y), 
-                            cursor);
-                    degrees_left = 
-                        Some(get_horizontal_angle_of_vector(
-                        mid_point, 
-                        cursor, 
-                    ));
-                }
-                if pts_len == 2 {
-                    p.move_to(arc.points[0]);
-                    p.line_to(arc.points[1]);
-                    
-                    end_angle = 
-                        get_angle_of_vectors(
-                            arc.points[0], 
-                            arc.points[1], 
-                            cursor) + arc.start_angle;
-
-                    let radius = arc.points[0].distance(arc.points[1]);
-                    let new_arc = canvas::path::Arc{ 
-                                            center: arc.points[0], 
-                                            radius, 
-                                            start_angle: arc.start_angle, 
-                                            end_angle, 
-                                        };
-                    p.arc(new_arc);
-
-                    degrees_left = 
-                        Some(get_horizontal_angle_of_vector(
-                        mid_point, 
-                        pts[1], 
-                    ));
-                    degrees_center = Some(to_degrees(&(end_angle.0-start_angle.0)));
-                };
-            },
-            DrawMode::Rotate => {
-                let rotated_arc = 
-                    canvas::path::Arc{ 
-                        center: arc.points[0], 
-                        radius, 
-                        start_angle: arc.start_angle, 
-                        end_angle, 
-                    };
-
-                degrees_left = 
-                    Some(get_horizontal_angle_of_vector(
-                        mid_point, 
-                        pts[1], 
-                    ));
-
-                p.arc(rotated_arc);
-                p.move_to(arc.points[0]);
-                p.line_to(arc.points[1]);
-                p.move_to(arc.points[0]);
-                p.line_to(arc.points[2]);
-                p.circle(arc.mid_point, 3.0);
-            },
-        }
-    });
-    
-    (path, mid_point, start_angle, end_angle, degrees_left, degrees_center)
-
-}
-
-fn build_bezier_path(bz: &Bezier, 
-                    draw_mode: DrawMode, 
-                    pending_cursor: Option<Point>,
-                    edit_point_index: Option<usize>, 
-                    edit_mid_point: bool,
-                    degrees: Option<f32>,
-                    ) -> (Path, f32, Point) {
-
-    let mut degrees = match degrees {
-        Some(d) => d,
-        None => bz.degrees,
-    };
-    let mut mid_point = bz.mid_point;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                p.move_to(bz.points[0]);
-                p.quadratic_curve_to(bz.points[2], bz.points[1]);
-            },
-            DrawMode::Edit => {
-                let mut pts = bz.points.clone();
-
-                if edit_mid_point {
-                    pts = translate_geometry(
-                        &pts, 
-                        pending_cursor.unwrap(),
-                        mid_point, 
-                        );
-                    mid_point = pending_cursor.unwrap();
-                } 
-                if edit_point_index.is_some() {
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    mid_point = get_mid_point(pts[0], pts[1]);
-                    
-                    degrees = 
-                        get_horizontal_angle_of_vector(
-                            mid_point, 
-                            pts[1], 
-                        );
-                }
-
-                p.move_to(pts[0]);
-                p.quadratic_curve_to(pts[2], pts[1]);
-                
-                for pt in pts {
-                    p.circle(pt, 3.0);
-                }
-
-                p.circle(mid_point, 3.0);
-            },
-            DrawMode::New => {
-                if bz.points.len() == 1 {
-                    mid_point = 
-                        get_mid_point(
-                            bz.points[0], 
-                            pending_cursor.unwrap()
-                        );
-                    degrees = 
-                        get_horizontal_angle_of_vector(
-                            bz.points[0],  
-                            pending_cursor.unwrap(),
-                        );
-                    p.move_to(bz.points[0]);
-                    p.line_to(pending_cursor.unwrap());
-                }
-                if bz.points.len() == 2 {
-                    p.move_to(bz.points[0]);
-                    p.quadratic_curve_to(pending_cursor.unwrap(), bz.points[1]);
-                }
-            },
-            DrawMode::Rotate => {
-                p.move_to(bz.points[0]);
-                p.quadratic_curve_to(bz.points[2], bz.points[1]);
-                p.move_to(bz.points[0]);
-                p.line_to(bz.points[1]);
-                p.circle(bz.mid_point, 3.0);
-            },
-        }
-    });
-
-    (path, degrees, mid_point)
-
-}
-
-fn build_circle_path(cir: &Circle, 
-                    draw_mode: DrawMode, 
-                    pending_cursor: Option<Point>,
-                    edit_point_index: Option<usize>, 
-                    edit_mid_point: bool,
-                ) -> Path {
-    Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                p.circle(cir.center, cir.radius);
-            },
-            DrawMode::Edit => {
-                let mut center = cir.center;
-                let mut cir_point = cir.circle_point;
-                let mut radius = cir.radius;
-
-                if edit_mid_point {
-                    cir_point = translate_geometry(
-                        &vec![cir_point], 
-                        pending_cursor.unwrap(),
-                        center,
-                    )[0];
-                    center = pending_cursor.unwrap();
-                }
-
-                if edit_point_index.is_some() {
-                    cir_point = pending_cursor.unwrap();
-                    radius = center.distance(cir_point);
-                }
-
-                p.circle(center, radius);
-                p.circle(center, 3.0);
-                p.circle(cir_point, 3.0);
-            },
-            DrawMode::New => {
-                let circle_point = pending_cursor.unwrap();
-                let radius = cir.center.distance(circle_point);
-                p.circle(cir.center, radius);
-            },
-            DrawMode::Rotate => {
-                p.circle(cir.center, cir.radius);
-            },
-        }
-    })
-}
-
-fn build_ellipse_path(ell: &Ellipse, 
-                        draw_mode: DrawMode, 
-                        pending_cursor: Option<Point>,
-                        edit_point_index: Option<usize>, 
-                        edit_mid_point: bool,
-                    ) -> Path {
-    Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                p.ellipse(Elliptical{ 
-                    center: ell.center, 
-                    radii: ell.radii, 
-                    rotation: ell.rotation, 
-                    start_angle: Radians(0.0), 
-                    end_angle: Radians(2.0*PI) 
-                });
-            },
-            DrawMode::Edit => {
-                let mut center = ell.center;
-                let mut radii = ell.radii;
-                let mut p1 = ell.points[1];
-                let mut p2 = ell.points[2];
-
-                if edit_mid_point {
-                    let points = translate_geometry(
-                        &ell.points, 
-                        pending_cursor.unwrap(),
-                        center,
-                    );
-                    center = pending_cursor.unwrap();
-                    p1 = points[1];
-                    p2 = points[2];
-                }
-
-                if edit_point_index.is_some() {
-                    let cursor = pending_cursor.unwrap();
-                    if edit_point_index == Some(1) {
-                        let vx = cursor.distance(center);
-                        let vy = ell.points[2].distance(center);
-                        p1 = Point::new(cursor.x, center.y);
-                        radii = Vector{x: vx, y: vy};
-                    } else {
-                        let vx = ell.points[1].distance(center);
-                        let vy = cursor.distance(center);
-                        p2 = Point::new(center.x, cursor.y);
-                        radii = Vector{x: vx, y: vy};
-                    }
-                }
-
-                p.circle(center, 3.0);
-                p.circle(p1, 3.0);
-                p.circle(p2, 3.0);
-                p.ellipse(Elliptical{ 
-                    center, 
-                    radii, 
-                    rotation: ell.rotation, 
-                    start_angle: Radians(0.0), 
-                    end_angle: Radians(2.0*PI) 
-                });
-            },
-            DrawMode::New => {
-                let cursor = pending_cursor.unwrap();
-                if ell.points.len() > 0 {
-                    p.move_to(ell.points[0]);
-
-                }
-                if ell.points.len() == 0 {
-                    p.circle(cursor, 3.0);
-                } else if ell.points.len() == 1 {
-                    let p1 = Point::new(cursor.x, ell.points[0].y);
-                    p.line_to(p1);
-                    let radius = p1.distance(ell.points[0]);
-                    p.circle(ell.points[0], radius);
-                } else if ell.points.len() == 2 {
-                    p.line_to(ell.points[1]);
-                    let p2 = Point::new(ell.points[0].x, cursor.y);
-                    p.line_to(p2);
-                    let vx = ell.points[1].distance(ell.points[0]);
-                    let vy = p2.distance(ell.points[0]);
-                    p.ellipse(Elliptical{ 
-                        center: ell.points[0], 
-                        radii: Vector{x: vx, y: vy}, 
-                        rotation: Radians(0.0), 
-                        start_angle: Radians(0.0), 
-                        end_angle: Radians(2.0*PI) 
-                    });
-                }
-                
-            },
-            DrawMode::Rotate => {
-                let vx = ell.points[1].distance(ell.center);
-                let vy = ell.points[2].distance(ell.center);
-                p.ellipse(Elliptical{ 
-                        center: ell.center, 
-                        radii: Vector{x: vx, y: vy}, 
-                        rotation: ell.rotation, 
-                        start_angle: Radians(0.0), 
-                        end_angle: Radians(2.0*PI) 
-                    });
-                p.circle(ell.center, 3.0);
-            },
-        }
-    })
-}
-
-fn build_line_path(line: &Line, 
-                    draw_mode: DrawMode, 
-                    pending_cursor: Option<Point>,
-                    edit_point_index: Option<usize>, 
-                    edit_mid_point: bool,
-                    degrees: Option<f32>,
-                    ) -> (Path, f32, Point) {
-
-    let mut degrees = match degrees {
-        Some(d) => d,
-        None => line.degrees,
-    };
-    let mut mid_point = line.mid_point;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                p.move_to(line.points[0]);
-                p.line_to(line.points[1]);
-            },
-            DrawMode::Edit => {
-                let mut pts = line.points.clone();
-
-                if edit_mid_point {
-                    pts = translate_geometry(
-                        &pts, 
-                        pending_cursor.unwrap(),
-                        mid_point,
-                    );
-                    mid_point = pending_cursor.unwrap();
-                };
-
-                if edit_point_index.is_some() {
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    mid_point = get_mid_point(pts[0], pts[1])
-                }
-
-                degrees = 
-                    get_horizontal_angle_of_vector(
-                        pts[0],  
-                        pts[1], 
-                    );
-
-                p.move_to(pts[0]);
-                p.line_to(pts[1]);
-                p.circle(pts[0], 3.0);
-                p.circle(pts[1], 3.0);
-                p.circle(mid_point, 3.0);
-            },
-            DrawMode::New => {
-                p.move_to(line.points[0]);
-                p.line_to(pending_cursor.unwrap());
-
-                degrees = 
-                    get_horizontal_angle_of_vector(
-                        line.points[0], 
-                        pending_cursor.unwrap(), 
-                    );
-            },
-            DrawMode::Rotate => {
-                p.move_to(line.points[0]);
-                p.line_to(line.points[1]);
-                p.circle(mid_point, 3.0);
-            },
-        }
-    });
-
-    (path, degrees, mid_point)
-
-}
-
-fn build_polygon_path(pg: &Polygon, 
-                        draw_mode: DrawMode, 
-                        pending_cursor: Option<Point>,
-                        edit_mid_point: bool,
-                        edit_other_point: bool,
-                        degrees: Option<f32>,
-                        ) -> (Path, f32, Point) {
-
-    let mut degrees = match degrees {
-        Some(d) => d,
-        None => pg.degrees,
-    };
-    let mut mid_point = pg.mid_point;
-    let mut pg_point = pg.pg_point;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                let points = &pg.points;
-                for (index, point) in points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.line_to(points[0]);
-            },
-            DrawMode::Edit => {
-                if edit_mid_point {
-                    pg_point = translate_geometry(
-                        &vec![pg.pg_point], 
-                        pending_cursor.unwrap(),
-                        pg.mid_point, 
-                    )[0];
-                    mid_point = pending_cursor.unwrap();
-                } 
-                if edit_other_point {
-                    pg_point = pending_cursor.unwrap();
-                    degrees = get_horizontal_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
-                }
-                
-                let pts = 
-                    build_polygon(
-                        mid_point, 
-                        pg_point, 
-                        pg.poly_points,
-                        degrees
-                    );
-                
-                for (index, pt) in pts.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*pt);
-                    } else {
-                        p.line_to(*pt);
-                    }
-                }
-                p.line_to(pts[0]);
-                p.move_to(mid_point);
-                p.line_to(pg_point);
-                p.circle(mid_point, 3.0);
-                p.circle(pg_point, 3.0);
-            },
-            DrawMode::New => {
-                degrees = get_horizontal_angle_of_vector(pg.mid_point, pending_cursor.unwrap());
-
-                let points = 
-                    build_polygon(
-                        pg.mid_point, 
-                        pending_cursor.unwrap(), 
-                        pg.poly_points,
-                        degrees,
-                    );
-                
-                for (index, point) in points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.move_to(pg.mid_point);
-                p.line_to(pending_cursor.unwrap());
-                p.circle(points[0], 3.0);
-            },
-            DrawMode::Rotate => {
-                for (index, point) in pg.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.move_to(pg.mid_point);
-                p.line_to(pg.pg_point);
-            },
-        }
-    });
-
-    (path, degrees, mid_point)
-
-}
-
-fn build_polyline_path(pl: &PolyLine, 
-                        draw_mode: DrawMode, 
-                        pending_cursor: Option<Point>,
-                        edit_point_index: Option<usize>, 
-                        edit_mid_point: bool,
-                        edit_other_point: bool,
-                        degrees: Option<f32>,
-                        ) -> (Path, f32, Point) {
-
-    let mut degrees = match degrees {
-        Some(d) => d,
-        None => pl.degrees,
-    };
-    let mut pts = pl.points.clone();
-    let mut mid_point = pl.mid_point;
-    let mut pl_point = pl.pl_point;
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                for (index, point) in pl.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-            },
-            DrawMode::Edit => {
-                if edit_mid_point {
-                    pts.push(pl_point);
-                    pts = translate_geometry(
-                        &pts, 
-                        pending_cursor.unwrap(),
-                        mid_point, 
-                    );
-                    pl_point = pts.pop().unwrap();
-                    mid_point = pending_cursor.unwrap();
-                } 
-                if edit_point_index.is_some() {
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                    mid_point = get_mid_geometry(&pts, Widget::PolyLine);
-                    pl_point = translate_geometry(
-                                    &vec![pl_point], 
-                                    mid_point, 
-                                    pl.mid_point,
-                                )[0];
-                }
-                if edit_other_point {
-                    degrees = get_horizontal_angle_of_vector(pl.mid_point, pending_cursor.unwrap());
-                    let step_degrees = degrees-pl.degrees;
-                    pts = rotate_geometry(&pts, &mid_point, &step_degrees, Widget::PolyLine);
-                    pl_point = pending_cursor.unwrap();
-
-                }
-
-                for (index, point) in pts.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                for pt in pts.iter() {
-                    p.circle(*pt, 3.0);
-                }
-                p.circle(mid_point, 3.0);
-                p.move_to(mid_point);
-                p.line_to(pl_point);
-                p.circle(pl_point, 3.0);
-            },
-            DrawMode::New => {
-                for (index, point) in pl.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.line_to(pending_cursor.unwrap());
-            },
-            DrawMode::Rotate => {
-                for (index, point) in pl.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                // let (slope, intercept) = get_linear_regression(&pl.points);
-                // let(p1, p2) = get_line_from_slope_intercept(&pl.points, slope, intercept);
-                // mid_point = get_mid_point(p1, p2);
-                // degrees = get_vertical_angle_of_vector(mid_point, p2);
-                p.move_to(pl.mid_point);
-                p.line_to(pl.pl_point);
-                p.circle(mid_point, 3.0);
-            },
-        }
-    });
-
-    (path, degrees, mid_point)
-
-}
-
-fn build_right_triangle_path(tr: &RightTriangle, 
-                            draw_mode: DrawMode, 
-                            pending_cursor: Option<Point>,
-                            edit_point_index: Option<usize>, 
-                            edit_mid_point: bool,
-                            edit_other_point: bool,
-                            degrees: Option<f32>,
-                        ) -> (Path, f32, Point, Point) {
-
-    let mut pts = tr.points.clone();
-    let mut mid_point = tr.mid_point;
-    let mut tr_point = tr.tr_point;
-    let mut degrees = match degrees {
-        Some(d) => d,
-        None => tr.degrees,
-    };
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                p.move_to(tr.points[0]);
-                p.line_to(tr.points[1]);
-                p.line_to(tr.points[2]);
-                p.line_to(tr.points[0]);
-            },
-            DrawMode::Edit => {
-                pts.push(tr_point);
-                if edit_mid_point {
-                    pts = translate_geometry(
-                        &pts, 
-                        pending_cursor.unwrap(),
-                        mid_point, 
-                    );
-                    tr_point = pts.pop().unwrap();
-                    mid_point = pending_cursor.unwrap();
-                } 
-                if edit_point_index.is_some() {
-                    let index = edit_point_index.unwrap();
-                    let cursor = pending_cursor.unwrap();
-                    if index == 0 {
-                        pts[0].y = cursor.y
-                    }
-                    if index == 1 {
-                        pts[1].y = cursor.y;
-                        pts[2].y = cursor.y;
-                    }
-                    if index == 2 {
-                        pts[2].x = cursor.x;
-                }
-                    let mid = get_mid_point(pts[1], pts[2]);
-                    let dist_b_mid = Point::new(mid.x-pts[2].x, mid.y-pts[2].y);
-                    tr_point = Point::new(
-                                    tr.points[2].x+dist_b_mid.x, 
-                                    tr.points[2].y+dist_b_mid.y);
-                }
-                if edit_other_point {
-                    degrees = 
-                        get_horizontal_angle_of_vector(
-                            tr.mid_point, 
-                            pending_cursor.unwrap()
-                        );
-                    let step_degrees = degrees-tr.degrees;
-                    pts = rotate_geometry(
-                            &pts, 
-                            &mid_point, 
-                            &step_degrees, 
-                            Widget::RightTriangle
-                        );
-                    tr_point = pending_cursor.unwrap();
-                }
-
-                p.move_to(pts[0]);
-                p.line_to(pts[1]);
-                p.line_to(pts[2]);
-                p.line_to(pts[0]);
-                p.move_to(mid_point);
-                p.line_to(tr_point);
-
-                p.circle(pts[0], 3.0);
-                p.circle(pts[1], 3.0);
-                p.circle(pts[2], 3.0);
-                p.circle(mid_point, 3.0);
-                p.circle(tr_point, 3.0);
-            },
-            DrawMode::New => {
-                let mut cursor = pending_cursor.unwrap();
-                p.move_to(tr.points[0]);
-                if tr.points.len() == 1 {
-                    cursor.x = tr.points[0].x;
-                    p.line_to(cursor);
-                } else if tr.points.len() == 2 {
-                    cursor.y = tr.points[1].y;
-                    p.line_to(tr.points[1]);
-                    p.line_to(cursor);
-                }
-            },
-            DrawMode::Rotate => {
-                p.move_to(tr.points[0]);
-                p.line_to(tr.points[1]);
-                p.line_to(tr.points[2]);
-                p.line_to(tr.points[0]);
-
-                p.move_to(tr.mid_point);
-                p.line_to(tr.tr_point);
-
-                p.circle(tr.mid_point, 3.0);
-                p.circle(tr.tr_point, 3.0);
-            },
-        }
-    });
-
-    (path, degrees, mid_point, tr_point)
-
-}
-
-
-fn build_free_hand_path(fh: &FreeHand, 
-                        draw_mode: DrawMode, 
-                        pending_cursor: Option<Point>,
-                        edit_point_index: Option<usize>,
-                        ) -> Path {
-
-    let mut pts = fh.points.clone();
-
-    let path = Path::new(|p| {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                for (index, point) in fh.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-            },
-            DrawMode::Edit => {
-                if edit_point_index.is_some() {
-                    pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
-                }
-                
-                for (index, point) in pts.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                for pt in pts.iter() {
-                    p.circle(*pt, 3.0);
-                }
-            },
-            DrawMode::New => {
-                for (index, point) in fh.points.iter().enumerate() {
-                    if index == 0 {
-                        p.move_to(*point);
-                    } else {
-                        p.line_to(*point);
-                    }
-                }
-                p.line_to(pending_cursor.unwrap());
-            },
-            DrawMode::Rotate => {
-                p.move_to(Point::new(0.0,0.0));
-            },
-        }
-    });
-
-    path
-    
-}
-
-fn build_text_path (txt: &Text, 
-                    draw_mode: DrawMode, 
-                    _pending_cursor: Option<Point>,
-                    _degrees: f32,
-                    blink: bool,
-                    ) -> (canvas::Text, Option<Path>) {
-
-        match draw_mode {
-            DrawMode::DrawAll => {
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                (text, None)
-            },
-            DrawMode::Edit => {
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                (text, None)
-            },
-            DrawMode::New => {
-                
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                
-                let path: Option<Path> = if blink {
-                    Some(Path::new(|p| {
-                        let (from, to) = 
-                            get_blink_position( 
-                                &txt.content,
-                                txt.position, 
-                                txt.blink_position,
-                            );
-                        p.move_to(from);
-                        p.line_to(to);
-                    }))
-                } else {
-                    None
-                };
-                (text, path)
-            },
-            DrawMode::Rotate => {
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                (text, None)
-            },
-        }
-
-                  
-}
-
-
-
-
-
-
-#[test]
-fn test_get_linear_regression() {
-    let points: Vec<Point>= 
-    vec![
-    Point::new(1.47, 52.21),
-    Point::new(1.50, 53.12),
-    Point::new(1.52, 54.48),
-    Point::new(1.55, 55.84),
-    Point::new(1.57, 57.20),
-    Point::new(1.60, 58.57),
-    Point::new(1.63, 59.93),
-    Point::new(1.65, 61.29),
-    Point::new(1.68, 63.11),
-    Point::new(1.70, 64.47),
-    Point::new(1.73, 66.28),
-    Point::new(1.75, 68.10),
-    Point::new(1.78, 69.92),
-    Point::new(1.80, 72.19),
-    Point::new(1.83, 74.46),
-    ];
-
-    let (slope, intercept) = get_linear_regression(&points);
-
-    assert_eq!(61.27219, slope);
-    assert_eq!(-39.06196, intercept);
-
-}
-
-#[test]
-fn test_get_line_from_slope_intercept() {
-    let points = vec![Point::new(0.0, 100.0), Point::new(30.0, 30.0), Point::new(25.0, 50.0)];
-    let (slope, intercept) = get_linear_regression(&points);
-    let line_points = get_line_from_slope_intercept(&points, slope, intercept);
-    println!("{:?} {:?}, {:?}",slope, intercept, line_points );
-}
-
-#[test]
-fn test_get_angle() {
-    //  all 4 quadrants
-    let center = Point::new(0.0, 0.0);
-    let p2 = Point::new(0.0, 10.0);
-    let degrees = get_horizontal_angle_of_vector(center, p2);
-    dbg!(degrees);
-
-    let p2 = Point::new(20.0, 10.0);
-    let degrees = get_horizontal_angle_of_vector(center, p2);
-    dbg!(degrees);
-
-    let p2 = Point::new(0.0, -10.0);
-    let degrees = get_horizontal_angle_of_vector(center, p2);
-    dbg!(degrees);
-
-    let p2 = Point::new(-20.0, 0.0);
-    let degrees = get_horizontal_angle_of_vector(center, p2);
-    dbg!(degrees);
-}
-
-#[test]
-fn test_rotate_geometry() {
-    let mut points= vec![Point::new(0.0, 0.0), Point::new(0.0, 20.0)];
-    let mid_point = Point::new(0.0, 0.0);
-    let degrees = &6.0;
-    for _ in 0..2 {
-        points = rotate_geometry(&points.clone(), &mid_point, degrees, Widget::Line);
-        dbg!(&points);
-    }
-}
-
-#[test]
-fn test_get_blink_position() {
-    let content = "This is a test string".to_string();
-    let text_position = Point::new(0.0, 0.0);
-    let blink_position = 11;
-    let (from, to) = get_blink_position(&content, text_position, blink_position);
-    println!("{:?} {:?}", from, to);
-}
