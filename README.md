@@ -7,6 +7,7 @@ https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 * Text widget needs an edit and rotation mode
 * Text widget needs it's own cache
 * Svg image widget
+* turn degrees display on or off
 
 ## Instructions:
 
