@@ -380,7 +380,7 @@ pub fn build_ellipse_path(ell: &Ellipse,
                     let p2 = Point::new(ell.points[0].x, cursor.y);
                     p.line_to(p2);
                     let vx = ell.points[1].distance(ell.points[0]);
-                    let vy = p2.distance(ell.points[0]);
+                    let vy = Point::new(ell.points[0].x, cursor.y).distance(ell.points[0]);
                     p.ellipse(Elliptical{ 
                         center: ell.points[0], 
                         radii: Vector{x: vx, y: vy}, 
