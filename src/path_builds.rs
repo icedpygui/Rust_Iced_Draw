@@ -291,6 +291,8 @@ pub fn build_circle_path(cir: &Circle,
             DrawMode::New => {
                 let circle_point = pending_cursor.unwrap();
                 let radius = cir.center.distance(circle_point);
+                p.move_to(cir.center);
+                p.line_to(circle_point);
                 p.circle(cir.center, radius);
             },
             DrawMode::Rotate => {
