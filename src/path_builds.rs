@@ -389,7 +389,6 @@ pub fn build_ellipse_path(ell: &Ellipse,
                         end_angle: Radians(2.0*PI) 
                     });
                 }
-                
             },
             DrawMode::Rotate => {
                 let vx = ell.points[1].distance(ell.center);
