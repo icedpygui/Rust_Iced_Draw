@@ -6,7 +6,7 @@ https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 ## TODO Items:
 * Text widget needs an edit and rotation mode
 * Text widget cursor blink may vary according to screen resolution and maybe os,  
-   adjust in helpers.rs get_blink_position by using a factor for the x position.
+investigating for a solution.
 * Text widget needs it's own cache
 * Svg image widget
 * turn degrees display on or off
