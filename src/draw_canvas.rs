@@ -2220,11 +2220,6 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidge
                             txt.content.push_str(" ");
                             txt.blink_position += 1;
                         },
-                        iced::keyboard::key::Named::Delete => {
-                            if txt.blink_position < txt.content.len() {
-                                txt.content.remove(txt.blink_position);
-                            }
-                        },
                         iced::keyboard::key::Named::Escape => escape = true,
                         iced::keyboard::key::Named::Backspace => {
                             if !txt.content.is_empty() && txt.blink_position != 0 {
@@ -2232,16 +2227,6 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidge
                                 txt.blink_position -= 1;
                             }
                         } 
-                        iced::keyboard::key::Named::ArrowLeft => {
-                            if txt.blink_position > 0 {
-                                txt.blink_position -= 1;
-                            }
-                        },
-                        iced::keyboard::key::Named::ArrowRight => {
-                            if txt.blink_position < txt.content.len() {
-                                txt.blink_position += 1;
-                            }
-                        }
                         _ => ()
                     }
                 },

@@ -16,7 +16,6 @@ use iced_aw::{color_picker, iced_fonts};
 use serde::{Deserialize, Serialize};
 
 mod draw_canvas;
-mod fonts;
 mod colors;
 mod path_builds;
 mod helpers;

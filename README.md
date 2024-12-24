@@ -5,8 +5,6 @@ https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 
 ## TODO Items:
 * Text widget needs an edit and rotation mode
-* Text widget cursor blink may vary according to screen resolution and maybe os,  
-investigating for a solution.
 * Text widget needs it's own cache
 * Svg image widget
 * turn degrees display on or off
@@ -15,6 +13,7 @@ investigating for a solution.
 ## Updates to Main since v0.1.0
 * Fixed elipse top positioning during new
 * Fixed circle points not showing during new
+* Blink routine for text not working so just blink with a character and only backspace delete works
 * TODO items in Readme
 
 ## Instructions:

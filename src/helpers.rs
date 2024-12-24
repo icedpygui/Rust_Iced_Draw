@@ -4,7 +4,7 @@ use std::f32::consts::PI;
 
 use iced::{Point, Radians};
 
-use crate::{draw_canvas::Widget, fonts::FONT_SIZE};
+use crate::draw_canvas::Widget;
 
 
 pub fn build_polygon(mid_point: Point, pg_point: Point, poly_points: usize, mut degrees: f32) -> Vec<Point> {
@@ -178,29 +178,6 @@ pub fn to_radians(degrees: &f32) -> f32 {
     degrees * PI/180.0
 }
 
-pub fn get_blink_position(content: &String,
-                        text_position: Point, 
-                        blink_position: usize, 
-                        ) -> (Point, Point) {
-
-    let content = content[0..blink_position].to_string();
-    let mut size = 0.0;
-    for c in content.chars() {
-        if c != '\r' {
-            let value = FONT_SIZE.get(&c);
-            size += value.unwrap();
-        }
-    }
-    
-    let from_x = text_position.x + size;
-    let from_y = text_position.y;
-    let from = Point::new(from_x, from_y);
-    let to_y = from.y + 16.0 * 1.2;
-    let to = Point::new(from.x, to_y);
-    (from, to)
-}
-
-
 #[test]
 fn test_get_linear_regression() {
     let points: Vec<Point>= 
@@ -269,11 +246,3 @@ fn test_rotate_geometry() {
     }
 }
 
-#[test]
-fn test_get_blink_position() {
-    let content = "This is a test string".to_string();
-    let text_position = Point::new(0.0, 0.0);
-    let blink_position = 11;
-    let (from, to) = get_blink_position(&content, text_position, blink_position);
-    println!("{:?} {:?}", from, to);
-}

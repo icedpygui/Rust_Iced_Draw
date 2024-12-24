@@ -4,7 +4,10 @@ use std::f32::consts::PI;
 
 use iced::{widget::canvas::{self, path::arc::Elliptical, Path}, Point, Radians, Vector};
 
-use crate::{draw_canvas::{get_mid_geometry, Arc, Bezier, Circle, DrawMode, Ellipse, FreeHand, Line, PolyLine, Polygon, RightTriangle, Text, Widget}, helpers::{build_polygon, get_angle_of_vectors, get_blink_position, get_horizontal_angle_of_vector, get_mid_point, rotate_geometry, to_degrees, translate_geometry}};
+use crate::{draw_canvas::{get_mid_geometry, Arc, Bezier, Circle, DrawMode, Ellipse, FreeHand, 
+    Line, PolyLine, Polygon, RightTriangle, Text, Widget}, helpers::{build_polygon, 
+    get_angle_of_vectors, get_horizontal_angle_of_vector, get_mid_point, rotate_geometry, 
+    to_degrees, translate_geometry}};
 
 pub fn build_arc_path(arc: &Arc, 
                     draw_mode: DrawMode, 
@@ -895,8 +898,12 @@ pub fn build_text_path (txt: &Text,
                 (text, path)
             },
             DrawMode::New => {
+                let mut text_cont = txt.content.clone();
+                if blink {
+                    text_cont.push_str("|");
+                }
                 let text = canvas::Text {
-                    content: txt.content.clone(),
+                    content: text_cont,
                     position: txt.position,
                     color: txt.color,
                     size: txt.size,
@@ -906,21 +913,8 @@ pub fn build_text_path (txt: &Text,
                     vertical_alignment: txt.vertical_alignment,
                     shaping: txt.shaping,
                 };
-                let path: Option<Path> = if blink {
-                    Some(Path::new(|p| {
-                        let (from, to) = 
-                            get_blink_position( 
-                                &txt.content,
-                                txt.position, 
-                                txt.blink_position,
-                            );
-                        p.move_to(from);
-                        p.line_to(to);
-                    }))
-                } else {
-                    None
-                };
-                (text, path)
+                
+                (text, None)
             },
             DrawMode::Rotate => {
                 let text = canvas::Text {
