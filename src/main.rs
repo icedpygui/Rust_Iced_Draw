@@ -718,7 +718,6 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     degrees: widget.rotation,
                     draw_mode,
                     status: DrawStatus::Completed,
-                    blink_position: widget.content.len(),
                 };
                 curves.insert(id, CanvasWidget::Text(txt));
             }
