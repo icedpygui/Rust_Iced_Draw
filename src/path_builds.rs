@@ -860,7 +860,8 @@ pub fn build_free_hand_path(fh: &FreeHand,
 
 pub fn build_text_path (txt: &Text, 
                     draw_mode: DrawMode, 
-                    _pending_cursor: Option<Point>,
+                    pending_cursor: Option<Point>,
+                    edit_text_position: bool,
                     _degrees: f32,
                     blink: bool,
                     ) -> (canvas::Text, Option<Path>) {
@@ -881,9 +882,13 @@ pub fn build_text_path (txt: &Text,
                 (text, None)
             },
             DrawMode::Edit => {
+                let mut cursor = txt.position;
+                if edit_text_position {
+                    cursor = pending_cursor.unwrap();
+                }
                 let text = canvas::Text {
                     content: txt.content.clone(),
-                    position: txt.position,
+                    position: cursor,
                     color: txt.color,
                     size: txt.size,
                     line_height: txt.line_height,
