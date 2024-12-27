@@ -14,6 +14,7 @@ https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 * Fixed elipse top positioning during new
 * Fixed circle points not showing during new
 * Blink routine for text not working so just blink with a character and only backspace delete works
+* Text editing only allows moving.  Delete and retype if editing needed.
 * TODO items in Readme
 
 ## Instructions:
