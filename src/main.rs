@@ -68,48 +68,73 @@ impl CanvasDraw {
     fn update(&mut self, message: Message) {
         match message {
             Message::WidgetDraw(mut widget) => {
-                let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
                 // Since the text widget may have a blinking cursor, the only way to use a timer
                 // is to use the main subscription one at this time, canvas lacks a time event.
                 // Therefore, the pending has to return the curve also at each change so that
-                // the curves can be updated.  The subscrition clears the cache at each tick.
-                // A bit more efficient way would be to just have a text cache and just clear it.
-                // Probable incorporated in a near future revision.
-                match draw_status {
-                    DrawStatus::Completed => {
-                        widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
-                    },
-                    DrawStatus::Delete => {
+                // the curves can be updated.  The subscription clears the text cache at each tick.
+                match widget {
+                    CanvasWidget::Text(_) => {
+                        let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
                         let id = get_widget_id(&widget);
-                        self.canvas_state.curves.remove(&id);
-                    },
-                    DrawStatus::TextInProgress => {
-                        // Since the text always returns a new curve or updated curve,
-                        // a check for the first return is need to see if a text is present. 
-                        let id = get_widget_id(&widget);
-                        let present = self.canvas_state.curves.get(&id);
-                        if present.is_none() {
-                            self.canvas_state.curves.insert(id, widget.clone());
-                        } else {
-                            self.canvas_state.curves.entry(id).and_modify(|k| *k= widget.clone());
+                        match draw_status {
+                            DrawStatus::Completed => {
+                                widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
+                                self.canvas_state.text_curves.entry(id).and_modify(|k| *k= widget.clone());
+                                self.canvas_state.timer_event_enabled = false;
+                            },
+                            DrawStatus::Delete => {
+                                self.canvas_state.text_curves.remove(&id);
+                                self.canvas_state.timer_event_enabled = false;
+                            },
+                            DrawStatus::Inprogress => {
+                                // Since the text always returns a new curve or updated curve,
+                                // a check for the first return is need to see if a text is present. 
+                                let present = self.canvas_state.text_curves.get(&id);
+                                if present.is_none() {
+                                    self.canvas_state.text_curves.insert(id, widget.clone());
+                                } else {
+                                    self.canvas_state.text_curves.entry(id).and_modify(|k| *k= widget.clone());
+                                }
+                            },
                         }
+                        match draw_mode {
+                            DrawMode::Edit | DrawMode::Rotate => {
+                                let id = get_widget_id(&widget);
+                                self.canvas_state.edit_widget_id = Some(id.clone());
+                                self.canvas_state.text_curves.entry(id).and_modify(|k| *k= widget);
+                            },
+                            _ => (),
+                        }
+                        self.canvas_state.request_text_redraw();
                     },
-                    _ => (),
-                }
-                if draw_status != DrawStatus::TextInProgress {
-                    if draw_mode == DrawMode::New {
-                        let id = get_widget_id(&widget);
-                        let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
-                        self.canvas_state.curves.insert(id, widget);
-                    } else {
-                        // if not new must be in edit or rotate mode so modify.
-                        let id = get_widget_id(&widget);
-                        self.canvas_state.edit_widget_id = Some(id.clone());
-                        self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
-                    }
+                    _ => {
+                        let (draw_mode, draw_status) = get_draw_mode_and_status(&widget);
+                        match draw_status {
+                            DrawStatus::Completed => {
+                                widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
+                            },
+                            DrawStatus::Delete => {
+                                let id = get_widget_id(&widget);
+                                self.canvas_state.curves.remove(&id);
+                            },  
+                            _ => (),
+                        }
+                        if draw_mode == DrawMode::New {
+                            let id = get_widget_id(&widget);
+                            let widget = set_widget_mode_or_status(widget.clone(), Some(DrawMode::DrawAll), Some(DrawStatus::Completed));
+                            self.canvas_state.curves.insert(id, widget);
+                        } else {
+                            // if not new must be in edit or rotate mode so modify.
+                            let id = get_widget_id(&widget);
+                            self.canvas_state.edit_widget_id = Some(id.clone());
+                            self.canvas_state.curves.entry(id).and_modify(|k| *k= widget);
+                        }
+                        
+                        self.canvas_state.request_redraw();
+                    },
                 }
 
-                self.canvas_state.request_redraw();
+                
             }
             Message::Clear => {
                 self.canvas_state.curves.clear();
@@ -122,13 +147,19 @@ impl CanvasDraw {
                         self.canvas_state.draw_mode = DrawMode::DrawAll;
                     },
                     DrawMode::Edit => {
-                        if self.canvas_state.curves.is_empty() {
+                        if self.canvas_state.curves.is_empty() && 
+                            self.canvas_state.text_curves.is_empty() {
                             return
                         }
                         self.canvas_state.draw_mode = DrawMode::Edit;
                     },
                     DrawMode::New => {
                         self.canvas_state.draw_mode = DrawMode::New;
+                        // When both the draw_mode is new and widget is text
+                        // then we cut on the timer
+                        if self.canvas_state.selected_radio_widget == Some(Widget::Text) {
+                            self.canvas_state.timer_event_enabled = true;
+                        }
                     },
                     DrawMode::Rotate => {
                         self.canvas_state.draw_mode = DrawMode::Rotate;
@@ -170,7 +201,11 @@ impl CanvasDraw {
                     }
                     Widget::Text => {
                         self.canvas_state.selected_radio_widget = Some(Widget::Text);
-                        self.canvas_state.timer_event_enabled = true;
+                        // When both the draw_mode is new and widget is text
+                        // then we cut on the timer
+                        if self.canvas_state.draw_mode == DrawMode::New {
+                            self.canvas_state.timer_event_enabled = true;
+                        }
                     }
                     Widget::None => (),
                 } 
@@ -178,18 +213,20 @@ impl CanvasDraw {
             Message::Tick => {
                 self.canvas_state.elapsed_time += self.canvas_state.timer_duration;
                 self.canvas_state.blink = !self.canvas_state.blink;
-                self.canvas_state.request_redraw();
+                // self.canvas_state.request_redraw();
+                self.canvas_state.request_text_redraw();
             },
             Message::Load => {
                 let path = Path::new("./resources/data.json");
                 let data = fs::read_to_string(path).expect("Unable to read file");
                 let widgets = serde_json::from_str(&data).expect("Unable to parse");
-                self.canvas_state.curves = import_widgets(widgets);
+                (self.canvas_state.curves, self.canvas_state.text_curves) = import_widgets(widgets);
                 self.canvas_state.request_redraw();
+                self.canvas_state.request_text_redraw();
             },
             Message::Save => {
                 let path = Path::new("./resources/data.json");
-                let widgets = convert_to_export(&self.canvas_state.curves);
+                let widgets = convert_to_export(&self.canvas_state.curves, &self.canvas_state.text_curves);
                 let _ = save(path, &widgets);
             },
             Message::PolyInput(input) => {
@@ -438,7 +475,7 @@ impl CanvasDraw {
 
         let draw =  
             container(self.canvas_state
-            .view(&self.canvas_state.curves)
+            .view(&self.canvas_state.curves, &self.canvas_state.text_curves)
             .map(Message::WidgetDraw))
             .into();
          
@@ -544,9 +581,10 @@ pub struct ExportWidget {
 }
 
 #[allow(clippy::redundant_closure)]
-fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
+fn import_widgets(widgets: Vec<ExportWidget>) -> (HashMap<Id, CanvasWidget>, HashMap<Id, CanvasWidget>) {
     
     let mut curves: HashMap<Id, CanvasWidget> = HashMap::new();
+    let mut text_curves: HashMap<Id, CanvasWidget> = HashMap::new();
 
     for widget in widgets.iter() {
         let points: Vec<Point> = widget.points.iter().map(|p| convert_to_point(p)).collect();
@@ -554,11 +592,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
         let color = convert_to_color(&widget.color);
         let width = widget.width;
         let draw_mode = DrawMode::DrawAll;
-        let mid_point = if widget.name == Widget::Text {
-            Point::default()
-        } else {
-            convert_to_point(&widget.mid_point)
-        };
+        let mid_point = convert_to_point(&widget.mid_point);
         
         match widget.name {
             Widget::None => {
@@ -719,20 +753,25 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> HashMap<Id, CanvasWidget> {
                     draw_mode,
                     status: DrawStatus::Completed,
                 };
-                curves.insert(id, CanvasWidget::Text(txt));
+                text_curves.insert(id, CanvasWidget::Text(txt));
             }
         }
     }
 
-    curves
+    (curves, text_curves)
 
 }
 
-fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
-     
+fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>, text: &HashMap<Id, CanvasWidget>) -> Vec<ExportWidget> {
+    
+    let mut curves = widgets.clone();
+    for (k, v) in text.iter() {
+        curves.insert(k.clone(), v.clone());
+    }
+
     let mut export = vec![];
 
-    for (_id, widget) in widgets.iter() {
+    for (_id, widget) in curves.iter() {
 
         let (name, 
             points, 

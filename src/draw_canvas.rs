@@ -1,5 +1,4 @@
 //! draw_canvas
-
 use std::collections::HashMap;
 
 use iced::keyboard::Key;
@@ -11,7 +10,9 @@ use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
 use serde::{Deserialize, Serialize};
 
-use crate::helpers::{build_polygon, get_angle_of_vectors, get_horizontal_angle_of_vector, get_line_from_slope_intercept, get_linear_regression, get_mid_point, rotate_geometry, to_degrees, to_radians, translate_geometry};
+use crate::helpers::{build_polygon, get_angle_of_vectors, get_horizontal_angle_of_vector, 
+    get_line_from_slope_intercept, get_linear_regression, get_mid_point, rotate_geometry, 
+    to_degrees, to_radians, translate_geometry};
 use crate::path_builds::{build_arc_path, build_bezier_path, build_circle_path, 
     build_ellipse_path, build_free_hand_path, build_line_path, 
     build_polygon_path, build_polyline_path, build_right_triangle_path, build_text_path};
@@ -48,8 +49,6 @@ pub enum DrawStatus {
     Inprogress,
     Completed,
     Delete,
-    TextInProgress,
-    TextCompleted,
 }
 
 // used to display text widget
@@ -77,7 +76,9 @@ impl DrawMode {
 #[derive(Debug)]
 pub struct CanvasState {
     cache: canvas::Cache,
+    text_cache: Vec<canvas::Cache>,
     pub curves: HashMap<Id, CanvasWidget>,
+    pub text_curves: HashMap<Id, CanvasWidget>,
     pub draw_mode: DrawMode,
     pub edit_widget_id: Option<Id>,
     pub escape_pressed: bool,
@@ -97,9 +98,15 @@ pub struct CanvasState {
 
 impl Default for CanvasState {
     fn default() -> Self {
+        let mut text_cache = vec![];
+        for _ in 0..20 {
+            text_cache.push(canvas::Cache::new());
+        }
         Self { 
-            cache: canvas::Cache::default(),
+            cache: canvas::Cache::new(),
+            text_cache,
             curves: HashMap::new(),
+            text_curves: HashMap::new(),
             draw_mode: DrawMode::DrawAll,
             edit_widget_id: None,
             escape_pressed: false,
@@ -120,10 +127,11 @@ impl Default for CanvasState {
 }
 
 impl CanvasState {
-    pub fn view<'a>(&'a self, curves: &'a HashMap<Id, CanvasWidget>) -> Element<'a, CanvasWidget> {
+    pub fn view<'a>(&'a self, curves: &'a HashMap<Id, CanvasWidget>, text_curves: &'a HashMap<Id, CanvasWidget>) -> Element<'a, CanvasWidget> {
         Canvas::new(DrawPending {
             state: self,
             curves,
+            text_curves,
         })
         .width(Fill)
         .height(Fill)
@@ -133,11 +141,18 @@ impl CanvasState {
     pub fn request_redraw(&mut self) {
         self.cache.clear();
     }
+
+    pub fn request_text_redraw(&mut self) {
+        for i in 0..20 {
+            self.text_cache[i].clear();
+        }
+    }
 }
 
 struct DrawPending<'a> {
     state: &'a CanvasState,
     curves: &'a HashMap<Id, CanvasWidget>,
+    text_curves: &'a HashMap<Id, CanvasWidget>,
 }
 
 impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
@@ -174,7 +189,8 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                     // 2 - find closest point
                                     // 3 - finish
                                     None => {
-                                        let widget_opt = find_closest_widget(self.curves, cursor_position);
+                                        let widget_opt = 
+                                            find_closest_widget(self.curves, self.text_curves, cursor_position);
                                         
                                         let selected_widget = 
                                             match widget_opt {
@@ -235,7 +251,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                         edit_other_point, 
                                     }) => {
 
-                                        let new_widget: CanvasWidget = 
+                                        let edited_widget: CanvasWidget = 
                                                 update_edited_widget(
                                                     widget.clone(), 
                                                     cursor_position, 
@@ -246,7 +262,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                                 );
                                         
                                         *program_state = None;
-                                        Some(new_widget)
+                                        Some(edited_widget)
                                     },
                                     _ => None,
                                 }
@@ -307,7 +323,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                             });
                                             
                                             let some_text = 
-                                                if self.state.selected_radio_widget.unwrap() == Widget::Text {
+                                                if check_if_text_widget(&widget) {
                                                     Some(widget)
                                                 } else {
                                                     None
@@ -325,7 +341,8 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                     //  - move mouse wheel
                                     // 2 - click to finish
                                     None => {
-                                        let widget_opt = find_closest_widget(self.curves, cursor_position);
+                                        let widget_opt = 
+                                            find_closest_widget(self.curves, self.text_curves, cursor_position);
                                         
                                         let selected_widget = 
                                             match widget_opt {
@@ -496,6 +513,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
         bounds: iced::Rectangle,
         cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
+        
         let content =
             self.state.cache.draw(renderer, bounds.size(), 
                             |frame| {
@@ -503,7 +521,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                 let background = Path::rectangle(Point::ORIGIN, frame.size());
                 frame.fill(&background, self.state.selected_canvas_color);
 
-                DrawCurve::draw_all(self.curves, self.state.blink, frame, theme);
+                DrawCurve::draw_all(self.curves, frame, theme);
 
                 frame.stroke(
                     &Path::rectangle(Point::ORIGIN, frame.size()),
@@ -513,11 +531,24 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                 );
             });
 
-        if let Some(pending) = state {
-            vec![content, pending.draw(renderer, theme, bounds, cursor)]
-        } else {
-            vec![content]
+        let mut text_content = vec![];
+        for (i, (_id, text_curve)) in self.text_curves.iter().enumerate() {
+            text_content.push(self.state.text_cache[i].draw(renderer, bounds.size(), |frame| {
+                DrawCurve::draw_text(text_curve, self.state.blink, frame, theme);
+            }));
         }
+            
+
+        if let Some(pending) = state {
+            let mut content = vec![content, pending.draw(renderer, theme, bounds, cursor)];
+            content.append(&mut text_content);
+            content
+        } else {
+            let mut content = vec![content];
+            content.append(&mut text_content);
+            content
+        }
+
     }
 
     fn mouse_interaction(
@@ -540,7 +571,7 @@ pub struct DrawCurve {
 }
 
 impl DrawCurve {
-    fn draw_all(curves: &HashMap<Id, CanvasWidget>, blink: bool, frame: &mut Frame, _theme: &Theme) {
+    fn draw_all(curves: &HashMap<Id, CanvasWidget>, frame: &mut Frame, _theme: &Theme) {
         // This draw only occurs at the completion of the 
         // widget(update occurs) and cache is cleared
         for (_id, widget) in curves.iter() {
@@ -706,25 +737,8 @@ impl DrawCurve {
                             (Some(path), Some(fh.color), Some(fh.width))
                         }
                     },
-                    CanvasWidget::Text(txt) => {
-                        if txt.draw_mode != DrawMode::Edit {
-                            let frame_path = 
-                                build_text_path (
-                                    txt,
-                                    txt.draw_mode,
-                                    None,
-                                    false,
-                                    0.0,
-                                    blink,
-                                );
-                            frame.fill_text(frame_path.0);
-                            
-                            (frame_path.1, Some(txt.color), Some(1.0))
-                        } else {
-                            (None, None, None)
-                        }
-                    }
-                    CanvasWidget::None => (None, None, None),
+                    
+                    _ => (None, None, None),
                 };
 
                 if let Some(path) = path { frame.stroke(
@@ -735,6 +749,46 @@ impl DrawCurve {
                     ) }
         }
 
+    }
+
+    fn draw_text(text_curve: &CanvasWidget, mut blink: bool, frame: &mut Frame, _theme: &Theme) {
+
+        let (path, color, width) = 
+            match &text_curve {
+                CanvasWidget::Text(txt) => {
+                    // During edit, pending draws the text,
+                    // so skip drawing here.
+                    if txt.draw_mode != DrawMode::Edit {
+                        if txt.draw_mode == DrawMode::DrawAll ||
+                            txt.draw_mode == DrawMode::Rotate {
+                                blink = false;
+                            }
+                        let (text, path) = 
+                            build_text_path (
+                                txt,
+                                txt.draw_mode,
+                                None,
+                                false,
+                                0.0,
+                                blink,
+                            );
+                        frame.fill_text(text);
+                        
+                        (path, Some(txt.color), Some(1.0))
+                    } else {
+                        (None, None, None)
+                    }
+                },
+                _ => (None, None, None)
+            };
+
+            if let Some(path) = path { frame.stroke(
+                &path,
+                Stroke::default()
+                .with_width(width.unwrap())
+                .with_color(color.unwrap()),
+                ) }
+        
     }
 }
 
@@ -1060,7 +1114,8 @@ impl Pending {
                                 (path, fh.color, fh.width)
                             },
                             CanvasWidget::Text(txt) => {
-                                let (text, path) = build_text_path (
+                                let (text, path) = 
+                                    build_text_path (
                                         txt,
                                         DrawMode::Edit,
                                         Some(cursor),
@@ -1213,7 +1268,8 @@ impl Pending {
                             (path, fh.color, fh.width, Point::default(), None, None)
                         },
                         CanvasWidget::Text(txt) => {
-                            let (text, path) = build_text_path (
+                            let (text, path) = 
+                                build_text_path (
                                         txt,
                                         DrawMode::Edit,
                                         Some(cursor),
@@ -1583,6 +1639,13 @@ pub enum Widget {
     FreeHand,
 }
 
+fn check_if_text_widget(canvas_widget: &CanvasWidget) -> bool {
+    match canvas_widget {
+        CanvasWidget::Text(_) => true,
+        _ => false,
+    }
+}
+
 fn add_new_widget(widget: Widget, 
                     poly_points: usize, 
                     color: Color,
@@ -1741,7 +1804,7 @@ fn add_new_widget(widget: Widget,
                     shaping: Shaping::Basic,
                     degrees: 0.0,
                     draw_mode,
-                    status: DrawStatus::TextInProgress,
+                    status: DrawStatus::Inprogress,
                 }
             )
         },
@@ -1762,6 +1825,7 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
                     bz.points[0], 
                     bz.points[1]
                 );
+
             Some(CanvasWidget::Bezier(bz))
         },
         CanvasWidget::Circle(cir) => { 
@@ -1850,7 +1914,7 @@ fn complete_new_widget(widget: CanvasWidget, cursor: Point) -> Option<CanvasWidg
         }
         CanvasWidget::Text(mut txt) => {
             txt.degrees = 0.0;
-            txt.status = DrawStatus::TextCompleted;
+            txt.status = DrawStatus::Completed;
             Some(CanvasWidget::Text(txt))
         }
     }
@@ -2120,6 +2184,7 @@ fn update_edited_widget(widget: CanvasWidget,
         CanvasWidget::Text(mut txt) => {
             txt.position = cursor;
             txt.status = status;
+            txt.draw_mode = DrawMode::DrawAll;
             CanvasWidget::Text(txt)
         }
     }
@@ -2559,15 +2624,20 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
                 txt.position = cursor;
                 false
             } else {
+                txt.status = DrawStatus::Completed;
+                txt.draw_mode = DrawMode::DrawAll;
                 true
             };
-            
+
             (CanvasWidget::Text(txt), finished)
         }
     }
 }
 
-fn find_closest_widget(curves: &HashMap<Id, CanvasWidget>, cursor: Point) -> Option<CanvasWidget> {
+fn find_closest_widget(curves: &HashMap<Id, CanvasWidget>, 
+                        text_curves: &HashMap<Id, CanvasWidget>, 
+                        cursor: Point) 
+                        -> Option<CanvasWidget> {
     let mut closest = f32::INFINITY;
     let mut closest_id = None;
     for (id, cw) in curves.iter() {
@@ -2577,13 +2647,29 @@ fn find_closest_widget(curves: &HashMap<Id, CanvasWidget>, cursor: Point) -> Opt
             closest_id = Some(id);
         }
     }
-
+    let mut text_id = false;
+    for(id, text) in text_curves.iter() {
+        let distance: f32 = get_distance_to_mid_point(text, cursor);
+        if distance < closest {
+            closest = distance;
+            closest_id = Some(id);
+            text_id = true;
+        }
+    }
+  
     let dc_opt = 
-        match closest_id {
-            Some(id) => curves.get(id),
-            None => None,
+        if text_id {
+            match closest_id {
+                Some(id) => text_curves.get(id),
+                None => None,
+            }
+        } else {
+            match closest_id {
+                Some(id) => curves.get(id),
+                None => None,
+            }
         };
-
+        
     match dc_opt {
         Some(widget) => Some(widget.clone()),
         None => None,
@@ -2738,10 +2824,9 @@ fn find_closest_point_index(widget: &CanvasWidget,
             };
             (Some(point_index), false, false)
         },
-        CanvasWidget::Text(txt) => {
-            // just putting cursor at the end for now
-            // todo find closest point between letters
-            (Some(txt.content.len()), false, false)
+        CanvasWidget::Text(_) => {
+            // just using the edit_other_point to indicate the position point
+            (None, false, true)
         }
     }
     
@@ -2882,3 +2967,28 @@ pub fn get_mid_geometry(pts: &[Point], curve_type: Widget) -> Point {
     
 }
 
+
+// #[macro_export]
+// macro_rules! mydbg {
+//     // NOTE: We cannot use `concat!` to make a static string as a format argument
+//     // of `eprintln!` because `file!` could contain a `{` or
+//     // `$val` expression could be a block (`{ .. }`), in which case the `eprintln!`
+//     // will be malformed.
+//     () => {
+//         $crate::eprintln!("[{}:{}:{}]", $crate::file!(), $crate::line!(), $crate::column!())
+//     };
+//     ($val:expr $(,)?) => {
+//         // Use of `match` here is intentional because it affects the lifetimes
+//         // of temporaries - https://stackoverflow.com/a/48732525/1063961
+//         match $val {
+//             tmp => {
+//                 $crate::eprintln!("[{}:{}:{}] {} = {:#?}",
+//                     $crate::file!(), $crate::line!(), $crate::column!(), $crate::stringify!($val), &tmp);
+//                 tmp
+//             }
+//         }
+//     };
+//     ($($val:expr),+ $(,)?) => {
+//         ($($crate::mydbg!($val)),+,)
+//     };
+// }
