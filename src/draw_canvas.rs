@@ -10,9 +10,7 @@ use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke};
 use iced::{Element, Fill, Point, Renderer, Theme};
 use serde::{Deserialize, Serialize};
 
-use crate::helpers::{build_polygon, get_angle_of_vectors, get_horizontal_angle_of_vector, 
-    get_line_from_slope_intercept, get_linear_regression, get_mid_point, rotate_geometry, 
-    to_degrees, to_radians, translate_geometry};
+use crate::helpers::{build_polygon, get_angle_of_vectors, get_horizontal_angle_of_vector, get_line_from_slope_intercept, get_linear_regression, get_mid_point, iced_h_text_alignment, iced_v_text_alignment, rotate_geometry, to_degrees, to_radians, translate_geometry};
 use crate::path_builds::{build_arc_path, build_bezier_path, build_circle_path, 
     build_ellipse_path, build_free_hand_path, build_line_path, 
     build_polygon_path, build_polyline_path, build_right_triangle_path, build_text_path};
@@ -53,25 +51,87 @@ pub enum DrawStatus {
 
 // used to display text widget
 impl DrawMode {
-    pub fn string(&self) -> String {
+    pub fn string(&self) -> Option<String> {
         match &self {
-            DrawMode::DrawAll => "DrawAll".to_string(),
-            DrawMode::New => "New".to_string(),
-            DrawMode::Edit => "Edit".to_string(),
-            DrawMode::Rotate => "Rotate".to_string(),
+            DrawMode::DrawAll => Some("DrawAll".to_string()),
+            DrawMode::New => Some("New".to_string()),
+            DrawMode::Edit => Some("Edit".to_string()),
+            DrawMode::Rotate => Some("Rotate".to_string()),
         }
     }
 
     pub fn to_enum(s: String) -> Self {
         match s.as_str() {
-            "DrawAll" | "drawall" | "Drawall" => DrawMode::DrawAll,
-            "Edit" | "edit" => DrawMode::Edit,
-            "New" | "new" => DrawMode::New,
-            "Rotate" | "rotate" => DrawMode::Rotate,
+            "DrawAll" => DrawMode::DrawAll,
+            "Edit" => DrawMode::Edit,
+            "New" => DrawMode::New,
+            "Rotate" => DrawMode::Rotate,
             _ => DrawMode::DrawAll,
         }
     }
+    pub fn options() -> Vec<String> {
+        vec!["DrawAll".to_string(), "New".to_string(), "Edit".to_string(), "Rotate".to_string(),]
+    }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HTextAlignment {
+    Left,
+    Center,
+    Right,
+}
+
+impl HTextAlignment {
+    pub fn string(&self) -> Option<String> {
+        match &self {
+            HTextAlignment::Left => Some("H_Left".to_string()),
+            HTextAlignment::Center => Some("H_Center".to_string()),
+            HTextAlignment::Right => Some("H_Right".to_string()),
+        }
+    }
+
+    pub fn to_enum(s: String) -> Self {
+        match s.as_str() {
+            "H_Left" => HTextAlignment::Left,
+            "H_Center" => HTextAlignment::Center,
+            "H_Right" => HTextAlignment::Right,
+            _ => HTextAlignment::Center,
+        }
+    }
+    pub fn options() -> Vec<String> {
+        vec!["H_Left".to_string(), "H_Center".to_string(), "H_Right".to_string()]
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VTextAlignment {
+    Top,
+    Center,
+    Bottom,
+}
+
+impl VTextAlignment {
+    pub fn string(&self) -> Option<String> {
+        match &self {
+            VTextAlignment::Top => Some("V_Top".to_string()),
+            VTextAlignment::Center => Some("V_Center".to_string()),
+            VTextAlignment::Bottom => Some("V_Bottom".to_string()),
+        }
+    }
+
+    pub fn to_enum(s: String) -> Self {
+        match s.as_str() {
+            "V_Top" => VTextAlignment::Top,
+            "V_Center" => VTextAlignment::Center,
+            "V_Bottom" => VTextAlignment::Bottom,
+            _ => VTextAlignment::Center,
+        }
+    }
+    pub fn options() -> Vec<String> {
+        vec!["V_Top".to_string(), "V_Center".to_string(), "V_Bottom".to_string()]
+    }
+}
+
 
 #[derive(Debug)]
 pub struct CanvasState {
@@ -90,6 +150,8 @@ pub struct CanvasState {
     pub selected_step_degrees: f32,
     pub selected_width: f32,
     pub selected_width_str: String,
+    pub selected_h_text_alignment: HTextAlignment,
+    pub selected_v_text_alignment: VTextAlignment,
     pub timer_event_enabled: bool,
     pub timer_duration: u64,
     pub elapsed_time: u64,
@@ -118,6 +180,8 @@ impl Default for CanvasState {
             selected_step_degrees: 6.0,
             selected_width: 2.0,
             selected_width_str: String::new(),
+            selected_h_text_alignment: HTextAlignment::Center,
+            selected_v_text_alignment: VTextAlignment::Center,
             timer_event_enabled: false,
             timer_duration: 750,
             elapsed_time: 0,
@@ -226,7 +290,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                         // which might be either a mid point(translate) or 
                                         // curve point (move point).
                                         let (point_index, mid_point, other_point) = 
-                                            find_closest_point_index(&widget, cursor_position);
+                                            find_closest_point_index(widget, cursor_position);
                                         let widget = widget.clone();
                                         *program_state = Some(Pending::EditThird {
                                             widget: widget.clone(),
@@ -284,6 +348,8 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                                 self.state.selected_draw_color,
                                                 self.state.selected_width,
                                                 self.state.draw_mode,
+                                                self.state.selected_h_text_alignment,
+                                                self.state.selected_v_text_alignment,
                                             );
 
                                         let (widget, _) = 
@@ -322,13 +388,11 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                                 widget: widget.clone(),
                                             });
                                             
-                                            let some_text = 
-                                                if check_if_text_widget(&widget) {
-                                                    Some(widget)
-                                                } else {
-                                                    None
-                                                };
-                                            some_text
+                                            if check_if_text_widget(&widget) {
+                                                Some(widget)
+                                            } else {
+                                                None
+                                            }
                                         }
                                     },
                                     _ => None,
@@ -353,7 +417,7 @@ impl<'a> canvas::Program<CanvasWidget> for DrawPending<'a> {
                                         // The widget needs to be in DrawAll initially, 
                                         // in order to display it in pending
                                         // However, the below return of the draw curve 
-                                        // the widget need to ne in the rotate method.
+                                        // the widget need to be in the rotate method.
                                         let widget = 
                                             set_widget_mode_or_status(
                                                 selected_widget, 
@@ -756,22 +820,21 @@ impl DrawCurve {
         let (path, color, width) = 
             match &text_curve {
                 CanvasWidget::Text(txt) => {
-                    // During edit, pending draws the text,
+                    // During edit or rotate, pending draws the text,
                     // so skip drawing here.
-                    if txt.draw_mode != DrawMode::Edit {
-                        if txt.draw_mode == DrawMode::DrawAll ||
-                            txt.draw_mode == DrawMode::Rotate {
-                                blink = false;
-                            }
+                    if txt.draw_mode == DrawMode::DrawAll || 
+                        txt.draw_mode == DrawMode::New {
+                        if txt.draw_mode == DrawMode::DrawAll {
+                            blink = false;
+                        }
+                        frame.translate(Vector::new(txt.position.x, txt.position.y));
                         let (text, path) = 
                             build_text_path (
                                 txt,
                                 txt.draw_mode,
-                                None,
-                                false,
-                                0.0,
                                 blink,
                             );
+                        frame.rotate(to_radians(&txt.degrees));
                         frame.fill_text(text);
                         
                         (path, Some(txt.color), Some(1.0))
@@ -1114,15 +1177,15 @@ impl Pending {
                                 (path, fh.color, fh.width)
                             },
                             CanvasWidget::Text(txt) => {
+                                frame.translate(Vector::new(txt.position.x, txt.position.y));
                                 let (text, path) = 
                                     build_text_path (
                                         txt,
                                         DrawMode::Edit,
-                                        Some(cursor),
-                                        false,
-                                        0.0,
                                         false,
                                     );
+                                    
+                                frame.rotate(to_radians(&txt.degrees));
                                 frame.fill_text(text);
                                 (path.unwrap(), txt.color, 2.0)
                             }
@@ -1268,16 +1331,15 @@ impl Pending {
                             (path, fh.color, fh.width, Point::default(), None, None)
                         },
                         CanvasWidget::Text(txt) => {
+                            frame.translate(Vector::new(cursor.x, cursor.y));
                             let (text, path) = 
                                 build_text_path (
                                         txt,
                                         DrawMode::Edit,
-                                        Some(cursor),
-                                        true,
-                                        0.0,
                                         false,
                                     );
 
+                            frame.rotate(to_radians(&txt.degrees));
                             frame.fill_text(text);
                             (path.unwrap(), Color::TRANSPARENT, 0.0, Point::default(), None, None)
                         }
@@ -1442,8 +1504,18 @@ impl Pending {
                                 );
                             (path, fh.color, fh.width, Point::default(), None, None)
                         },
-                        CanvasWidget::Text(_txt) => {
-                            (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
+                        CanvasWidget::Text(txt) => {
+                            frame.translate(Vector::new(txt.position.x, txt.position.y));
+                            let (text, path) = 
+                                build_text_path (
+                                        txt,
+                                        DrawMode::Rotate,
+                                        false,
+                                    );
+                            frame.rotate(to_radians(&degrees.unwrap()));
+                            frame.fill_text(text.clone());
+                            
+                            (path.unwrap(), text.color, 2.0, Point::default(), None, None)
                         }
                         CanvasWidget::None => {
                             (Path::new(|_| {}), Color::TRANSPARENT, 0.0, Point::default(), None, None)
@@ -1640,17 +1712,17 @@ pub enum Widget {
 }
 
 fn check_if_text_widget(canvas_widget: &CanvasWidget) -> bool {
-    match canvas_widget {
-        CanvasWidget::Text(_) => true,
-        _ => false,
-    }
+    matches!(canvas_widget, CanvasWidget::Text(_))
 }
 
 fn add_new_widget(widget: Widget, 
                     poly_points: usize, 
                     color: Color,
                     width: f32,
-                    draw_mode: DrawMode) 
+                    draw_mode: DrawMode,
+                    h_alignment: HTextAlignment,
+                    v_alignment: VTextAlignment,
+                    ) 
                     -> CanvasWidget {
     match widget {
         Widget::None => {
@@ -1790,6 +1862,8 @@ fn add_new_widget(widget: Widget,
             )
         }
         Widget::Text => {
+            let h_align = iced_h_text_alignment(h_alignment);
+            let v_align = iced_v_text_alignment(v_alignment);
             CanvasWidget::Text(
                 Text {
                     id: Id::unique(),
@@ -1799,8 +1873,8 @@ fn add_new_widget(widget: Widget,
                     size: Pixels(16.0),
                     line_height: LineHeight::Relative(1.2),
                     font: Default::default(),
-                    horizontal_alignment: alignment::Horizontal::Left,
-                    vertical_alignment: alignment::Vertical::Top,
+                    horizontal_alignment: h_align,
+                    vertical_alignment: v_align,
                     shaping: Shaping::Basic,
                     degrees: 0.0,
                     draw_mode,
@@ -1958,7 +2032,7 @@ fn update_edited_widget(widget: CanvasWidget,
                 let r = arc.radius;
                 let b = arc.end_angle.0;
                 let point_b = Point::new(r*b.cos(), r*b.sin());
-                arc.points[2] = translate_geometry(&vec![point_b], arc.mid_point, Point::default())[0];
+                arc.points[2] = translate_geometry(&[point_b], arc.mid_point, Point::default())[0];
 
             } else if mid_point {
                 arc.points = 
@@ -2077,7 +2151,7 @@ fn update_edited_widget(widget: CanvasWidget,
             } else if mid_point {
                 let trans_pts = 
                     translate_geometry(
-                        &vec![pg.pg_point], 
+                        &[pg.pg_point], 
                         cursor,
                         pg.mid_point, 
                     );
@@ -2104,7 +2178,7 @@ fn update_edited_widget(widget: CanvasWidget,
                     );
                 pl.pl_point = 
                     translate_geometry(
-                        &vec![pl.pl_point], 
+                        &[pl.pl_point], 
                         mid_point, 
                         pl.mid_point
                     )[0];
@@ -2214,7 +2288,7 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             let b = arc.end_angle.0;
             let point_b = Point::new(r*b.cos(), r*b.sin());
 
-            arc.points[2] = translate_geometry(&vec![point_b], arc.mid_point, Point::default())[0];
+            arc.points[2] = translate_geometry(&[point_b], arc.mid_point, Point::default())[0];
             
             if status.is_some() {
                 arc.status = status.unwrap();
@@ -2285,7 +2359,11 @@ fn update_rotated_widget(widget: &mut CanvasWidget,
             (CanvasWidget::FreeHand(fh.clone()), 0.0)
         },
         CanvasWidget::Text(txt) => {
-            (CanvasWidget::Text(txt.clone()), 0.0)
+            txt.degrees += step_degrees;
+            if status.is_some() {
+                txt.status = status.unwrap();
+            }
+            (CanvasWidget::Text(txt.clone()), txt.degrees)
         }
     }
 }
@@ -2298,13 +2376,13 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidge
                 Key::Named(named) => {
                     match named {
                         iced::keyboard::key::Named::Enter => {
-                            txt.content.push_str("\r");
+                            txt.content.push('\r');
                         },
                         iced::keyboard::key::Named::Tab => {
                             txt.content.push_str("    ");
                         },
                         iced::keyboard::key::Named::Space => {
-                            txt.content.push_str(" ");
+                            txt.content.push(' ');
                         },
                         iced::keyboard::key::Named::Escape => escape = true,
                         iced::keyboard::key::Named::Backspace => {
@@ -2327,16 +2405,10 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidge
             }
         },
         CanvasWidget::FreeHand(fh) => {
-            match modified.as_ref() {
-                Key::Named(named) => {
-                    match named {
-                        iced::keyboard::key::Named::Enter => {
-                            fh.completed = true;
-                        },
-                        _ => ()
-                    }
-                },
-                _ => (),
+            if let Key::Named(named) = modified.as_ref() {
+                if named == iced::keyboard::key::Named::Enter {
+                    fh.completed = true;
+                }
             }
             
            (Some(CanvasWidget::FreeHand(fh.clone())), fh.completed)
@@ -2349,10 +2421,7 @@ fn add_keypress(widget: &mut CanvasWidget, modified: Key) -> (Option<CanvasWidge
 fn get_del_key(modified: Key) -> bool {
     match modified.as_ref() {
         Key::Named(named) => {
-            match named {
-                iced::keyboard::key::Named::Delete => true,
-                _ => false,
-            }
+            matches!(named, iced::keyboard::key::Named::Delete)
         },
         _ => false,
     }
@@ -2492,7 +2561,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
                     let r = arc.radius;
                     let b = arc.end_angle.0;
                     let point_b = Point::new(r*b.cos(), r*b.sin());
-                    arc.points[2] = translate_geometry(&vec![point_b], arc.mid_point, Point::default())[0];
+                    arc.points[2] = translate_geometry(&[point_b], arc.mid_point, Point::default())[0];
                     true
                 },
                 _ => false
@@ -2502,16 +2571,15 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
         },
         CanvasWidget::Bezier(bezier) => {
             let mut bz = bezier.clone();
+            let mut finished = false;
             bz.points.push(cursor);
 
             if bz.points.len() == 2 {
                 bz.degrees = get_horizontal_angle_of_vector(bz.points[0], bz.points[1]);
             }
-            let finished = if bz.points.len() == 3 {
-                true
-            } else {
-                false
-            };
+            if bz.points.len() == 3 {
+                finished = true;
+            }
             
             (CanvasWidget::Bezier(bz), finished)
         },
@@ -2530,7 +2598,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
         },
         CanvasWidget::Ellipse(ell) => {
             let mut ell = ell.clone();
-            let finished = if ell.points.len() == 0 {
+            let finished = if ell.points.is_empty() {
                 ell.points.push(cursor);
                 false
             } else if ell.points.len() == 1 {
@@ -2609,11 +2677,7 @@ fn set_widget_point(widget: &CanvasWidget, cursor: Point) -> (CanvasWidget, bool
         CanvasWidget::FreeHand(fh) => {
             let mut fh = fh.clone();
             fh.points.push(cursor);
-            let finished = if fh.completed {
-                true
-            } else {
-                false
-            };
+            let finished = fh.completed;
             
             (CanvasWidget::FreeHand(fh), finished)
         },
@@ -2660,20 +2724,18 @@ fn find_closest_widget(curves: &HashMap<Id, CanvasWidget>,
     let dc_opt = 
         if text_id {
             match closest_id {
-                Some(id) => text_curves.get(id),
+                Some(id) => text_curves.get(id).cloned(),
                 None => None,
             }
         } else {
             match closest_id {
-                Some(id) => curves.get(id),
+                Some(id) => curves.get(id).cloned(),
                 None => None,
             }
         };
         
-    match dc_opt {
-        Some(widget) => Some(widget.clone()),
-        None => None,
-    }
+    dc_opt
+    
 }
 
 // returns a bool if mid_point and an optional usize 

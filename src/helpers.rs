@@ -2,9 +2,13 @@
 
 use std::f32::consts::PI;
 
-use iced::{Point, Radians};
 
-use crate::draw_canvas::Widget;
+use iced::{alignment, Point, Radians};
+// use iced::{Font, Pixels};
+// use iced::widget::text::Shaping;
+// use iced::advanced::graphics::text::cosmic_text::{self, LayoutLine};
+// use iced::advanced::graphics::text;
+use crate::draw_canvas::{HTextAlignment, VTextAlignment, Widget};
 
 
 pub fn build_polygon(mid_point: Point, pg_point: Point, poly_points: usize, mut degrees: f32) -> Vec<Point> {
@@ -82,7 +86,7 @@ pub fn get_line_from_slope_intercept(points: &[Point],
 
 }
 
-pub fn translate_geometry(pts: &Vec<Point>, 
+pub fn translate_geometry(pts: &[Point], 
                         new_center: Point,
                         old_center: Point, 
                         ) 
@@ -130,7 +134,7 @@ pub fn get_horizontal_angle_of_vector(center: Point, p2: Point) -> f32 {
     let p1 = Point::new(center.x-10.0, center.y);
     let pts = 
         translate_geometry(
-            &vec![p1, p2], 
+            &[p1, p2], 
             Point::default(), 
             center,
         );
@@ -152,7 +156,7 @@ pub fn get_angle_of_vectors(center: Point, p1: Point, p2: Point) -> Radians {
 
     let pts = 
         translate_geometry(
-            &vec![p1, p2], 
+            &[p1, p2], 
             Point::default(), 
             center,
         );
@@ -177,6 +181,45 @@ pub fn to_degrees(radians_f32: &f32) -> f32 {
 pub fn to_radians(degrees: &f32) -> f32 {
     degrees * PI/180.0
 }
+
+pub fn iced_h_text_alignment(align: HTextAlignment) -> alignment::Horizontal {
+    match align {
+        HTextAlignment::Left => alignment::Horizontal::Left,
+        HTextAlignment::Center => alignment::Horizontal::Center,
+        HTextAlignment::Right => alignment::Horizontal::Right,
+    }
+}
+
+pub fn iced_v_text_alignment(align: VTextAlignment) -> alignment::Vertical {
+    match align {
+        VTextAlignment::Top => alignment::Vertical::Top,
+        VTextAlignment::Center => alignment::Vertical::Center,
+        VTextAlignment::Bottom => alignment::Vertical::Bottom,
+    }
+}
+
+// pub fn text_layout(content: &String, shaping: Shaping, font: Font, size: Pixels) -> Vec<LayoutLine> {
+//     let mut font_system =
+//         text::font_system().write().expect("Write font system");
+
+//     let mut buffer = cosmic_text::BufferLine::new(
+//         content,
+//         cosmic_text::LineEnding::default(),
+//         cosmic_text::AttrsList::new(text::to_attributes(font)),
+//         text::to_shaping(shaping),
+//     );
+
+//     let layout = buffer.layout(
+//         font_system.raw(),
+//         size.0,
+//         None,
+//         cosmic_text::Wrap::None,
+//         None,
+//         4,
+//     ).to_vec();
+//     layout
+// }
+
 
 #[test]
 fn test_get_linear_regression() {
@@ -245,4 +288,5 @@ fn test_rotate_geometry() {
         dbg!(&points);
     }
 }
+
 

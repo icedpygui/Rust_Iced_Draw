@@ -81,7 +81,7 @@ pub fn build_arc_path(arc: &Arc,
                     let r = radius;
                     let b = end_angle.0;
                     let point_b = Point::new(r*b.cos(), r*b.sin());
-                    pts[2] = translate_geometry(&vec![point_b], mid_point, Point::default())[0];
+                    pts[2] = translate_geometry(&[point_b], mid_point, Point::default())[0];
                     
                 }
                 p.move_to(pts[0]);
@@ -275,7 +275,7 @@ pub fn build_circle_path(cir: &Circle,
 
                 if edit_mid_point {
                     cir_point = translate_geometry(
-                        &vec![cir_point], 
+                        &[cir_point], 
                         pending_cursor.unwrap(),
                         center,
                     )[0];
@@ -367,11 +367,11 @@ pub fn build_ellipse_path(ell: &Ellipse,
             },
             DrawMode::New => {
                 let cursor = pending_cursor.unwrap();
-                if ell.points.len() > 0 {
+                if !ell.points.is_empty(){
                     p.move_to(ell.points[0]);
 
                 }
-                if ell.points.len() == 0 {
+                if ell.points.is_empty() {
                     p.circle(cursor, 3.0);
                 } else if ell.points.len() == 1 {
                     let p1 = Point::new(cursor.x, ell.points[0].y);
@@ -511,7 +511,7 @@ pub fn build_polygon_path(pg: &Polygon,
             DrawMode::Edit => {
                 if edit_mid_point {
                     pg_point = translate_geometry(
-                        &vec![pg.pg_point], 
+                        &[pg.pg_point], 
                         pending_cursor.unwrap(),
                         pg.mid_point, 
                     )[0];
@@ -626,7 +626,7 @@ pub fn build_polyline_path(pl: &PolyLine,
                     pts[edit_point_index.unwrap()] = pending_cursor.unwrap();
                     mid_point = get_mid_geometry(&pts, Widget::PolyLine);
                     pl_point = translate_geometry(
-                                    &vec![pl_point], 
+                                    &[pl_point], 
                                     mid_point, 
                                     pl.mid_point,
                                 )[0];
@@ -811,7 +811,7 @@ pub fn build_free_hand_path(fh: &FreeHand,
 
     let mut pts = fh.points.clone();
 
-    let path = Path::new(|p| {
+    Path::new(|p| {
         match draw_mode {
             DrawMode::DrawAll => {
                 for (index, point) in fh.points.iter().enumerate() {
@@ -852,24 +852,18 @@ pub fn build_free_hand_path(fh: &FreeHand,
                 p.move_to(Point::new(0.0,0.0));
             },
         }
-    });
+    })
 
-    path
-    
 }
 
 pub fn build_text_path (txt: &Text, 
                     draw_mode: DrawMode, 
-                    pending_cursor: Option<Point>,
-                    edit_point: bool,
-                    _degrees: f32,
                     blink: bool,
                     ) -> (canvas::Text, Option<Path>) {
-        match draw_mode {
-            DrawMode::DrawAll => {
-                let text = canvas::Text {
+
+        let mut text = canvas::Text {
                     content: txt.content.clone(),
-                    position: txt.position,
+                    position: Point::ORIGIN,
                     color: txt.color,
                     size: txt.size,
                     line_height: txt.line_height,
@@ -878,62 +872,29 @@ pub fn build_text_path (txt: &Text,
                     vertical_alignment: txt.vertical_alignment,
                     shaping: txt.shaping,
                 };
+        match draw_mode {
+            DrawMode::DrawAll => { 
                 (text, None)
             },
             DrawMode::Edit => {
-                let position = if edit_point {
-                    pending_cursor.unwrap()
-                } else {
-                    txt.position
-                };
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
                 let path = Some(Path::new(|p| {
-                    p.circle(text.position, 3.0);
+                    p.circle(Point::new(0.0, -10.0), 3.0);
                 }));
                 (text, path)
             },
             DrawMode::New => {
                 let mut text_cont = txt.content.clone();
                 if blink {
-                    text_cont.push_str("|");
+                    text_cont.push('|');
                 }
-                let text = canvas::Text {
-                    content: text_cont,
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                
+                text.content = text_cont;
                 (text, None)
             },
             DrawMode::Rotate => {
-                let text = canvas::Text {
-                    content: txt.content.clone(),
-                    position: txt.position,
-                    color: txt.color,
-                    size: txt.size,
-                    line_height: txt.line_height,
-                    font: txt.font,
-                    horizontal_alignment: txt.horizontal_alignment,
-                    vertical_alignment: txt.vertical_alignment,
-                    shaping: txt.shaping,
-                };
-                (text, None)
+                let path = Some(Path::new(|p| {
+                    p.circle(Point::new(0.0, -10.0), 3.0);
+                }));
+                (text, path)
             },
         }
 

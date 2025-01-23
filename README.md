@@ -4,8 +4,6 @@ Drawing program using Iced-rs
 https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 
 ## TODO Items:
-* Text widget needs an edit and rotation mode
-* Text widget needs it's own cache
 * Svg image widget
 * turn degrees display on or off
 * add a pixels amount when drawing or a scaled amount like inches mm, etc.
@@ -13,9 +11,8 @@ https://github.com/user-attachments/assets/01f8fb41-082a-45b5-92a6-806814385578
 ## Updates to Main since v0.1.0
 * Fixed elipse top positioning during new
 * Fixed circle points not showing during new
-* Blink routine for text not working so just blink with a character and only backspace delete works
+* Blink cursor routine for text not working so just blink with a character and only backspace delete works
 * Text editing only allows moving.  Delete and retype if editing needed.
-* TODO items in Readme
 
 ## Instructions:
 
@@ -64,6 +61,8 @@ if you selected the mid point, you can drag the curve to a new place.
 The curves can be rotated in two ways.
 1. if in edit mode, one of the points will rotate the curve.
 2. mouse scrolling.
+3. text is rotated by mouse only in Rotate mode.  The text is rotated based
+    on the position of the text alignment.
 
 
 
@@ -108,9 +107,7 @@ mouse scroll => widget is rotated
 2nd click => rotation ends and curve return for updating.
 
 The Text widget is different because of need to have a blinking cursor.
-Canvas, at this time, does not have a timed event so the main subscription event is used.
+Canvas does not have a timed event so the main subscription event is used.
 The subscription event is turned on when a Text widget is selected.  At each tick,
-the canvas cache is cleared resulting in a redraw.  Instead of returning pending curve, 
-Pending returns a curve to the main for display.  Currently, the Text widget is added to
-the curves hashmap but a later update will have the Text widgets in their own cache to improve 
-performance.
+the canvas text cache is cleared resulting in a redraw. 
+Pending returns a curve to the main messaging function for display.

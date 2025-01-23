@@ -8,7 +8,7 @@ use iced::theme::palette::Background;
 use iced::widget::text::{LineHeight, Shaping};
 use iced::widget::{button, column, container, 
     pick_list, radio, row, text_input};
-use iced::{alignment, time, Color, Element, Font, Pixels, 
+use iced::{alignment, time, Color, Element, Font, Pixels,
     Point, Radians, Subscription, Theme, Vector};
 use iced::widget::container::Id;
 
@@ -20,10 +20,7 @@ mod colors;
 mod path_builds;
 mod helpers;
 
-use draw_canvas::{get_draw_mode_and_status, get_widget_id, 
-    set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, 
-    DrawMode, DrawStatus, Ellipse, FreeHand, Line, PolyLine, Polygon, 
-    RightTriangle, Text, Widget};
+use draw_canvas::{get_draw_mode_and_status, get_widget_id, set_widget_mode_or_status, Arc, Bezier, CanvasWidget, Circle, DrawMode, DrawStatus, Ellipse, FreeHand, HTextAlignment, Line, PolyLine, Polygon, RightTriangle, Text, VTextAlignment, Widget};
 
 
 
@@ -55,6 +52,8 @@ enum Message {
     Save,
     PolyInput(String),
     WidthInput(String),
+    HTextAlignment(String),
+    VTextAlignment(String),
     Tick,
     SelectDrawColor,
     SubmitDrawColor(Color),
@@ -81,6 +80,7 @@ impl CanvasDraw {
                                 widget = set_widget_mode_or_status(widget, Some(DrawMode::DrawAll), None);
                                 self.canvas_state.text_curves.entry(id).and_modify(|k| *k= widget.clone());
                                 self.canvas_state.timer_event_enabled = false;
+                                self.canvas_state.draw_mode = DrawMode::DrawAll;
                             },
                             DrawStatus::Delete => {
                                 self.canvas_state.text_curves.remove(&id);
@@ -206,6 +206,8 @@ impl CanvasDraw {
                         if self.canvas_state.draw_mode == DrawMode::New {
                             self.canvas_state.timer_event_enabled = true;
                         }
+                        self.canvas_state.selected_h_text_alignment = HTextAlignment::Center;
+                        self.canvas_state.selected_v_text_alignment = VTextAlignment::Center;
                     }
                     Widget::None => (),
                 } 
@@ -246,6 +248,14 @@ impl CanvasDraw {
                 } else {
                     self.canvas_state.selected_width = 2.0; //default
                 }
+            },
+            Message::HTextAlignment(alignment) => {
+                self.canvas_state.selected_h_text_alignment = HTextAlignment::to_enum(alignment.clone());
+                self.canvas_state.request_redraw();
+            },
+            Message::VTextAlignment(alignment) => {
+                self.canvas_state.selected_v_text_alignment = VTextAlignment::to_enum(alignment.clone());
+                self.canvas_state.request_redraw();
             },
             Message::SelectDrawColor => {
                 self.show_draw_color_picker = true;
@@ -378,25 +388,18 @@ impl CanvasDraw {
                 .on_input(Message::WidthInput)
                 .into();
 
-        let poly_pts_input = 
+        let poly_pts_input: Element<Message> = 
             text_input("Poly Points(3)", 
                         &self.canvas_state.selected_poly_points_str)
                 .on_input(Message::PolyInput)
                 .into();
-
-        let mode_options = 
-            vec![
-                "None".to_string(), 
-                "New".to_string(), 
-                "Edit".to_string(), 
-                "Rotate".to_string()
-                ];
-
+    
         let mode = 
             pick_list(
-                mode_options, 
-                Some(self.canvas_state.draw_mode.string()), 
-                Message::ModeSelected).into();
+                DrawMode::options(), 
+                self.canvas_state.draw_mode.string(), 
+                Message::ModeSelected
+            ).into();
 
         let save = 
             button("Save")
@@ -447,8 +450,8 @@ impl CanvasDraw {
                 .spacing(5.0)
                 .into();
             
-        let col = 
-            column(vec![
+        let mut col_vec = 
+            vec![
             clear_btn,
             arc, 
             bezier, 
@@ -462,16 +465,33 @@ impl CanvasDraw {
             txt,
             mode,
             load_save_row,
-            poly_pts_input,
-            widths,
             draw_color,
             canvas_color,
-            ])
+            widths,
+            ];
+            
+            if self.canvas_state.selected_radio_widget == Some(Widget::Polygon) ||
+             self.canvas_state.selected_radio_widget == Some(Widget::PolyLine) {
+                col_vec.push(poly_pts_input);
+            }
+
+            if self.canvas_state.selected_radio_widget == Some(Widget::Text) {
+                let h_text_alignment = 
+                    pick_list(HTextAlignment::options(), self.canvas_state.selected_h_text_alignment.string(), 
+                        Message::HTextAlignment);
+                col_vec.push(h_text_alignment.into());
+
+                let v_text_alignment = 
+                    pick_list(VTextAlignment::options(), self.canvas_state.selected_v_text_alignment.string(), 
+                        Message::VTextAlignment);
+                col_vec.push(v_text_alignment.into());
+            }
+
+        let col: Element<Message> = column(col_vec)
             .width(175.0)
             .spacing(10.0)
             .padding(10.0)
             .into();
-
 
         let draw =  
             container(self.canvas_state
@@ -566,6 +586,57 @@ impl ExportColor {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ExportHorizontal {
+   Left,
+   Center,
+   Right,
+   None,
+}
+
+
+fn convert_to_export_horizontal(h: alignment::Horizontal) -> ExportHorizontal {
+    match h {
+        alignment::Horizontal::Left => ExportHorizontal::Left,
+        alignment::Horizontal::Center => ExportHorizontal::Center,
+        alignment::Horizontal::Right => ExportHorizontal::Right,
+    }
+}
+
+fn convert_to_iced_horizontal(h: ExportHorizontal) -> alignment::Horizontal {
+    match h {
+        ExportHorizontal::Left => alignment::Horizontal::Left,
+        ExportHorizontal::Center => alignment::Horizontal::Center,
+        ExportHorizontal::Right => alignment::Horizontal::Right,
+        ExportHorizontal::None => panic!("no matching iced alingmnet::Horizontal"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ExportVertical {
+   Top,
+   Center,
+   Bottom,
+   None,
+}
+
+fn convert_to_export_vertical(v: alignment::Vertical) -> ExportVertical {
+    match v {
+        alignment::Vertical::Top => ExportVertical::Top,
+        alignment::Vertical::Center => ExportVertical::Center,
+        alignment::Vertical::Bottom => ExportVertical::Bottom,
+    }
+}
+
+fn convert_to_iced_vertical(v: ExportVertical) -> alignment::Vertical {
+    match v {
+        ExportVertical::Top => alignment::Vertical::Top,
+        ExportVertical::Center => alignment::Vertical::Center,
+        ExportVertical::Bottom => alignment::Vertical::Bottom,
+        ExportVertical::None => panic!("no matching iced alingmnet::Vertical"),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportWidget {
     pub name: Widget,
@@ -578,6 +649,8 @@ pub struct ExportWidget {
     pub radius: f32,
     pub color: ExportColor,
     pub width: f32,
+    pub horizontal_alignment: ExportHorizontal,
+    pub vertical_alignment: ExportVertical,
 }
 
 #[allow(clippy::redundant_closure)]
@@ -618,7 +691,7 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> (HashMap<Id, CanvasWidget>, Has
                 let id = Id::unique();
                 let bz = Bezier {
                     id: id.clone(),
-                    points: points,
+                    points,
                     mid_point,
                     color,
                     width,
@@ -746,8 +819,8 @@ fn import_widgets(widgets: Vec<ExportWidget>) -> (HashMap<Id, CanvasWidget>, Has
                     size: Pixels(16.0),
                     line_height: LineHeight::Relative(1.2),
                     font: Font::default(),
-                    horizontal_alignment: alignment::Horizontal::Left,
-                    vertical_alignment: alignment::Vertical::Top,
+                    horizontal_alignment: convert_to_iced_horizontal(widget.horizontal_alignment),
+                    vertical_alignment: convert_to_iced_vertical(widget.vertical_alignment),
                     shaping: Shaping::Basic,
                     degrees: widget.rotation,
                     draw_mode,
@@ -782,42 +855,56 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>, text: &HashMap<Id, Can
             radius,
             color, 
             width,
-            content ,
+            content,
+            horizontal_alignment,
+            vertical_alignment,
             ) = 
             match widget {
                 CanvasWidget::None => {
-                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, 0.0, Color::TRANSPARENT, 0.0, String::new())
+                    (Widget::None, &vec![], Point::default(), Point::default(), 0, 0.0, 0.0, 
+                    Color::TRANSPARENT, 0.0, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Arc(arc) => {
                     let other_point = Point{ x: arc.start_angle.0, y: arc.end_angle.0 };
-                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.radius, arc.color, arc.width, String::new())
+                    (Widget::Arc, &arc.points, arc.mid_point, other_point, 0, 0.0, arc.radius, 
+                        arc.color, arc.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Bezier(bz) => {
-                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, 0.0, bz.color, bz.width, String::new())
+                    (Widget::Bezier, &bz.points, bz.mid_point, Point::default(), 0, bz.degrees, 0.0, 
+                    bz.color, bz.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Circle(cir) => {
-                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.radius, cir.color, cir.width, String::new())
+                    (Widget::Circle, &vec![cir.circle_point], cir.center, cir.circle_point, 0, 0.0, cir.radius, 
+                        cir.color, cir.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Ellipse(ell) => {
-                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, 0.0, ell.color, ell.width, String::new())
+                    (Widget::Ellipse, &ell.points, ell.center, Point::default(), 0, ell.rotation.0, 0.0, 
+                    ell.color, ell.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Line(ln) => {
-                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, 0.0, ln.color, ln.width, String::new())
+                    (Widget::Line, &ln.points, ln.mid_point, Point::default(), 0, ln.degrees, 0.0, 
+                    ln.color, ln.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::Polygon(pg) => {
-                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, 0.0, pg.color, pg.width, String::new())
+                    (Widget::Polygon, &pg.points, pg.mid_point, pg.pg_point, pg.poly_points, pg.degrees, 0.0, 
+                        pg.color, pg.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::PolyLine(pl) => {
-                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, 0.0, pl.color, pl.width, String::new())
+                    (Widget::PolyLine, &pl.points, pl.mid_point, pl.pl_point, pl.poly_points, pl.degrees, 0.0, 
+                        pl.color, pl.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::RightTriangle(tr) => {
-                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, 0.0, tr.color, tr.width, String::new())
+                    (Widget::RightTriangle, &tr.points, tr.mid_point, tr.tr_point, 3, tr.degrees, 0.0, 
+                        tr.color, tr.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 },
                 CanvasWidget::FreeHand(fh) => {
-                    (Widget::FreeHand, &fh.points, Point::default(), Point::default(), 0, 0.0, 0.0, fh.color, fh.width, String::new())
+                    (Widget::FreeHand, &fh.points, Point::default(), Point::default(), 0, 0.0, 0.0, 
+                    fh.color, fh.width, String::new(), ExportHorizontal::None, ExportVertical::None)
                 }
                 CanvasWidget::Text(txt) => {
-                    (Widget::Text, &vec![], Point::default(), txt.position, 3, txt.degrees, 0.0, txt.color, 0.0, txt.content.clone())
+                    (Widget::Text, &vec![], Point::default(), txt.position, 0, txt.degrees, 0.0, 
+                    txt.color, 0.0, txt.content.clone(), 
+                    convert_to_export_horizontal(txt.horizontal_alignment), convert_to_export_vertical(txt.vertical_alignment))
                 },
         };
 
@@ -840,7 +927,9 @@ fn convert_to_export(widgets: &HashMap<Id, CanvasWidget>, text: &HashMap<Id, Can
                 rotation,
                 radius, 
                 color: x_color, 
-                width,  
+                width,
+                horizontal_alignment,
+                vertical_alignment, 
             })
     }
     
